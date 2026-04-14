@@ -33,6 +33,10 @@ private:
     BandKnobs mid2;
     BandKnobs low;
 
+    juce::Label coreSectionLabel;
+    juce::Slider coreSat;
+    juce::Label coreSatLabel;
+
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
 
     static void styleKnob(juce::Slider& s, const juce::String& name);

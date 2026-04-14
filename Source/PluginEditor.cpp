@@ -31,7 +31,8 @@ void ParaEQ301AudioProcessorEditor::styleLabel(juce::Label& l, const juce::Strin
 ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProcessor& p)
     : AudioProcessorEditor(&p), proc(p)
 {
-    setSize(320, 4 * kRowHeight + kTopMargin + 18);
+    constexpr int kFooterH = 58;
+    setSize(320, 4 * kRowHeight + kTopMargin + 18 + kFooterH);
 
     auto& ap = proc.getAPVTS();
 
@@ -85,6 +86,25 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lowCf", low.cf));
     attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lowGain", low.gain));
 
+    coreSectionLabel.setText("Core (pre-EQ)", juce::dontSendNotification);
+    coreSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    coreSectionLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+    addAndMakeVisible(coreSectionLabel);
+
+    styleKnob(coreSat, "Core sat");
+    styleLabel(coreSatLabel, "Sat");
+    addAndMakeVisible(coreSat);
+    addAndMakeVisible(coreSatLabel);
+    attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreSat", coreSat));
+    coreSat.textFromValueFunction = [](double v)
+    {
+        return juce::String(juce::roundToInt(v * 100.0)) + " %";
+    };
+    coreSat.valueFromTextFunction = [](const juce::String& t)
+    {
+        return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
+    };
+
     auto hzStringFromValue = [](double v) { return juce::String(static_cast<int>(std::round(v))) + " Hz"; };
     auto dbStringFromValue = [](double v) { return juce::String(v, 1) + " dB"; };
 
@@ -120,6 +140,12 @@ void ParaEQ301AudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced(8);
     bounds.removeFromTop(18);
+
+    auto footer = bounds.removeFromBottom(54);
+    coreSectionLabel.setBounds(footer.removeFromLeft(100).reduced(0, 12));
+    const int cx = footer.getX() + 4;
+    coreSat.setBounds(cx, footer.getY(), kKnobSize, kKnobSize + 18);
+    coreSatLabel.setBounds(cx, footer.getY() + kKnobSize + 2, kKnobSize, 14);
 
     auto placeRow = [&](BandKnobs& band, int rowIndex)
     {

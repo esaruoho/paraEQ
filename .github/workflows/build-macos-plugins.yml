@@ -1,5 +1,8 @@
 # Universal macOS binaries: arm64 (Apple Silicon) + x86_64 (Intel).
 # Produces a ZIP (manual copy to ~/Library/Audio/Plug-Ins) and a .pkg (installs to /Library/Audio/Plug-Ins).
+#
+# On every push to main (and manual workflow_dispatch): creates a new GitHub Release with zip + pkg.
+# PRs: build + artifact only (no release). Tag uses run_id so it is unique repo-wide.
 
 name: Build macOS AU + VST3 (universal)
 
@@ -8,8 +11,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  release:
-    types: [published]
 
 concurrency:
   group: build-macos-${{ github.workflow }}-${{ github.ref }}
@@ -59,16 +60,8 @@ jobs:
           AU_SRC="build/ParaEQ301_artefacts/Release/AU/ParaEQ 301.component"
           VST_SRC="build/ParaEQ301_artefacts/Release/VST3/ParaEQ 301.vst3"
 
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VER="${{ github.event.release.tag_name }}"
-            PKG_VER="${VER#v}"
-            if ! [[ "$PKG_VER" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
-              PKG_VER="1.0.0"
-            fi
-          else
-            VER="1.0.0-build.${{ github.run_number }}"
-            PKG_VER="1.0.${{ github.run_number }}"
-          fi
+          VER="1.0.0-build.${{ github.run_number }}"
+          PKG_VER="1.0.${{ github.run_number }}"
           SAFE_VER="${VER//\//-}"
 
           STAGE="staging/ParaEQ301-${SAFE_VER}"
@@ -121,12 +114,15 @@ jobs:
             ParaEQ301-macos-universal-*.pkg
           if-no-files-found: error
 
-      - name: Attach assets to GitHub Release
-        if: github.event_name == 'release'
+      - name: Create GitHub Release
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          TAG="build-${{ github.run_id }}"
+          gh release create "$TAG" \
             "${{ steps.package.outputs.zip_name }}" \
             "${{ steps.package.outputs.pkg_name }}" \
-            --clobber
+            --title "ParaEQ 301 — build ${{ github.run_number }} (${{ github.sha }})" \
+            --notes "Automated release for commit [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})." \
+            --target "${{ github.sha }}"

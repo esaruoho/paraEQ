@@ -1,9 +1,21 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 namespace
 {
     constexpr float kShelfQ = 0.707f;
+
+    // Pre-EQ soft saturation: drive01 0 = linear, 1 = full wet tanh curve. Input clamped before shaping.
+    float applyCoreSaturation(float x, float drive01) noexcept
+    {
+        if (drive01 <= 1.0e-8f)
+            return x;
+        x = juce::jlimit(-8.0f, 8.0f, x);
+        const float push = 1.0f + drive01 * 22.0f;
+        const float wet = std::tanh(push * x);
+        return x * (1.0f - drive01) + wet * drive01;
+    }
 
     juce::NormalisableRange<float> freqRangeSkewed(float minHz, float maxHz, float centreHz)
     {
@@ -89,6 +101,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "coreSat", "Core sat",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
     return layout;
 }
 
@@ -170,6 +188,7 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
     const int numSamps = buffer.getNumSamples();
+    const float coreDrive = apvts.getRawParameterValue("coreSat")->load();
 
     for (int ch = 0; ch < numCh; ++ch)
     {
@@ -177,11 +196,14 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         for (int n = 0; n < numSamps; ++n)
         {
             float x = data[n];
+            x = applyCoreSaturation(x, coreDrive);
             const size_t i = static_cast<size_t>(ch);
             x = lowShelfPerChannel[i].processSample(x);
             x = mid1PeakPerChannel[i].processSample(x);
             x = mid2PeakPerChannel[i].processSample(x);
             x = highShelfPerChannel[i].processSample(x);
+            if (!std::isfinite(x))
+                x = 0.0f;
             data[n] = x;
         }
     }
