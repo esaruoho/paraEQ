@@ -37,7 +37,12 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
-    void updateFilters(double sampleRate) noexcept;
+    void updateFiltersUniform(double sampleRate) noexcept;
+    void updateFiltersForChannel(int ch, double sampleRate,
+                                 float lowCf, float lowGain,
+                                 float m1f, float m1bw, float m1g,
+                                 float m2f, float m2bw, float m2g,
+                                 float hiCf, float hiGain) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -49,8 +54,11 @@ private:
     std::array<IIRFilter, 4> mid2PeakPerChannel;
     std::array<IIRFilter, 4> highShelfPerChannel;
 
+    juce::dsp::Limiter<float> outputLimiter;
+
     int maxChannelsPrepared = 0;
     double currentSampleRate = 44100.0;
+    std::array<float, 4> lfoPhase { { 0.f, 0.f, 0.f, 0.f } };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessor)
 };

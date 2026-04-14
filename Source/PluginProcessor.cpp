@@ -5,8 +5,9 @@
 namespace
 {
     constexpr float kShelfQ = 0.707f;
+    constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
+    constexpr int kCoeffUpdateInterval = 4;
 
-    // Pre-EQ soft saturation: drive01 0 = linear, 1 = full wet tanh curve. Input clamped before shaping.
     float applyCoreSaturation(float x, float drive01) noexcept
     {
         if (drive01 <= 1.0e-8f)
@@ -34,6 +35,23 @@ namespace
         if (q > 50.0f)
             return 50.0f;
         return q;
+    }
+
+    float modGainDb(float base, float sinVal, float depth01) noexcept
+    {
+        return juce::jlimit(-30.0f, 30.0f, base + sinVal * depth01 * 8.0f);
+    }
+
+    float modCfHz(float base, float minHz, float maxHz, float sinVal, float depth01) noexcept
+    {
+        const float mult = std::pow(2.0f, sinVal * depth01 * 0.45f);
+        return juce::jlimit(minHz, maxHz, base * mult);
+    }
+
+    float modBwHz(float base, float minHz, float maxHz, float sinVal, float depth01) noexcept
+    {
+        const float span = (maxHz - minHz) * 0.35f;
+        return juce::jlimit(minHz, maxHz, base + sinVal * depth01 * span);
     }
 }
 
@@ -101,11 +119,52 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
+    layout.add(std::make_unique<juce::AudioParameterBool>("coreOn", "Core color", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "coreSat", "Core sat",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "lfoStereoPhase", "LFO L/R phase",
+        juce::NormalisableRange<float>(0.0f, 180.0f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("deg")));
+
+    auto lfoRateRange = juce::NormalisableRange<float>(0.02f, 14.0f, 0.01f, 0.35f);
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiRate", "Hi LFO Hz", lfoRateRange, 0.5f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    const juce::NormalisableRange<float> lfoDepthRange(0.f, 1.f, 0.01f);
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiDepthGain", "Hi LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiDepthCf", "Hi LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1Rate", "M1 LFO Hz", lfoRateRange, 0.4f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthGain", "M1 LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthCf", "M1 LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthBw", "M1 LFO bw", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2Rate", "M2 LFO Hz", lfoRateRange, 0.35f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthGain", "M2 LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthCf", "M2 LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthBw", "M2 LFO bw", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoRate", "Lo LFO Hz", lfoRateRange, 0.45f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoDepthGain", "Lo LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoDepthCf", "Lo LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("outLimOn", "Output limiter", true));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "outLimThresh", "Lim threshold",
+        juce::NormalisableRange<float>(-16.0f, -0.3f, 0.1f),
+        -2.5f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "outLimRelease", "Lim release",
+        juce::NormalisableRange<float>(20.0f, 400.0f, 1.0f, 0.35f),
+        90.0f,
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
 
     return layout;
 }
@@ -120,7 +179,6 @@ ParaEQ301AudioProcessor::ParaEQ301AudioProcessor()
 
 void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused(samplesPerBlock);
     currentSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
 
     juce::dsp::ProcessSpec spec;
@@ -139,7 +197,17 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         highShelfPerChannel[static_cast<size_t>(ch)].prepare(spec);
     }
 
-    updateFilters(currentSampleRate);
+    juce::dsp::ProcessSpec limSpec;
+    limSpec.sampleRate = currentSampleRate;
+    limSpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock > 0 ? samplesPerBlock : 512);
+    limSpec.numChannels = static_cast<juce::uint32>(juce::jmax(1, maxChannelsPrepared));
+    outputLimiter.prepare(limSpec);
+    outputLimiter.reset();
+
+    for (float& p : lfoPhase)
+        p = 0.f;
+
+    updateFiltersUniform(currentSampleRate);
 }
 
 bool ParaEQ301AudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -153,7 +221,7 @@ bool ParaEQ301AudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
             || mainOut == juce::AudioChannelSet::stereo());
 }
 
-void ParaEQ301AudioProcessor::updateFilters(double sampleRate) noexcept
+void ParaEQ301AudioProcessor::updateFiltersUniform(double sampleRate) noexcept
 {
     const float hiCf = apvts.getRawParameterValue("hiCf")->load();
     const float hiGain = apvts.getRawParameterValue("hiGain")->load();
@@ -166,17 +234,23 @@ void ParaEQ301AudioProcessor::updateFilters(double sampleRate) noexcept
     const float lowCf = apvts.getRawParameterValue("lowCf")->load();
     const float lowGain = apvts.getRawParameterValue("lowGain")->load();
 
+    for (int ch = 0; ch < maxChannelsPrepared; ++ch)
+        updateFiltersForChannel(ch, sampleRate, lowCf, lowGain, m1f, m1bw, m1g, m2f, m2bw, m2g, hiCf, hiGain);
+}
+
+void ParaEQ301AudioProcessor::updateFiltersForChannel(int ch, double sampleRate,
+                                                      float lowCf, float lowGain,
+                                                      float m1f, float m1bw, float m1g,
+                                                      float m2f, float m2bw, float m2g,
+                                                      float hiCf, float hiGain) noexcept
+{
+    const size_t i = static_cast<size_t>(ch);
     const float q1 = qFromBandwidthHz(m1f, m1bw);
     const float q2 = qFromBandwidthHz(m2f, m2bw);
-
-    for (int ch = 0; ch < maxChannelsPrepared; ++ch)
-    {
-        const size_t i = static_cast<size_t>(ch);
-        *lowShelfPerChannel[i].coefficients = *Coefficients::makeLowShelf(sampleRate, static_cast<double>(lowCf), kShelfQ, lowGain);
-        *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m1f), q1, m1g);
-        *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m2f), q2, m2g);
-        *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, static_cast<double>(hiCf), kShelfQ, hiGain);
-    }
+    *lowShelfPerChannel[i].coefficients = *Coefficients::makeLowShelf(sampleRate, static_cast<double>(lowCf), kShelfQ, lowGain);
+    *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m1f), q1, m1g);
+    *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m2f), q2, m2g);
+    *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, static_cast<double>(hiCf), kShelfQ, hiGain);
 }
 
 void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -184,27 +258,138 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused(midi);
 
-    updateFilters(getSampleRate() > 0.0 ? getSampleRate() : currentSampleRate);
-
+    const double sr = getSampleRate() > 0.0 ? getSampleRate() : currentSampleRate;
     const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
     const int numSamps = buffer.getNumSamples();
-    const float coreDrive = apvts.getRawParameterValue("coreSat")->load();
+
+    const bool coreOn = apvts.getRawParameterValue("coreOn")->load() > 0.5f;
+    const float coreDrive = coreOn ? apvts.getRawParameterValue("coreSat")->load() : 0.f;
+
+    const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
+    const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
+    const float dM1G = apvts.getRawParameterValue("lfoM1DepthGain")->load();
+    const float dM1C = apvts.getRawParameterValue("lfoM1DepthCf")->load();
+    const float dM1B = apvts.getRawParameterValue("lfoM1DepthBw")->load();
+    const float dM2G = apvts.getRawParameterValue("lfoM2DepthGain")->load();
+    const float dM2C = apvts.getRawParameterValue("lfoM2DepthCf")->load();
+    const float dM2B = apvts.getRawParameterValue("lfoM2DepthBw")->load();
+    const float dLoG = apvts.getRawParameterValue("lfoLoDepthGain")->load();
+    const float dLoC = apvts.getRawParameterValue("lfoLoDepthCf")->load();
+
+    const float stereoDeg = apvts.getRawParameterValue("lfoStereoPhase")->load();
+    const float stereoRad = stereoDeg * kTwoPi / 360.f;
+
+    const bool anyLfo = (dHiG + dHiC + dM1G + dM1C + dM1B + dM2G + dM2C + dM2B + dLoG + dLoC) > 1.0e-5f;
+
+    const float rHi = apvts.getRawParameterValue("lfoHiRate")->load() / static_cast<float>(sr);
+    const float rM1 = apvts.getRawParameterValue("lfoM1Rate")->load() / static_cast<float>(sr);
+    const float rM2 = apvts.getRawParameterValue("lfoM2Rate")->load() / static_cast<float>(sr);
+    const float rLo = apvts.getRawParameterValue("lfoLoRate")->load() / static_cast<float>(sr);
+
+    const float baseHiCf = apvts.getRawParameterValue("hiCf")->load();
+    const float baseHiG = apvts.getRawParameterValue("hiGain")->load();
+    const float baseM1f = apvts.getRawParameterValue("mid1Cf")->load();
+    const float baseM1bw = apvts.getRawParameterValue("mid1Bw")->load();
+    const float baseM1g = apvts.getRawParameterValue("mid1Gain")->load();
+    const float baseM2f = apvts.getRawParameterValue("mid2Cf")->load();
+    const float baseM2bw = apvts.getRawParameterValue("mid2Bw")->load();
+    const float baseM2g = apvts.getRawParameterValue("mid2Gain")->load();
+    const float baseLoCf = apvts.getRawParameterValue("lowCf")->load();
+    const float baseLoG = apvts.getRawParameterValue("lowGain")->load();
+
+    if (!anyLfo)
+    {
+        updateFiltersUniform(sr);
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            for (int n = 0; n < numSamps; ++n)
+            {
+                float x = data[n];
+                x = applyCoreSaturation(x, coreDrive);
+                const size_t i = static_cast<size_t>(ch);
+                x = lowShelfPerChannel[i].processSample(x);
+                x = mid1PeakPerChannel[i].processSample(x);
+                x = mid2PeakPerChannel[i].processSample(x);
+                x = highShelfPerChannel[i].processSample(x);
+                if (!std::isfinite(x))
+                    x = 0.0f;
+                data[n] = x;
+            }
+        }
+    }
+    else
+    {
+        for (int n = 0; n < numSamps; ++n)
+        {
+            lfoPhase[0] += rHi;
+            lfoPhase[1] += rM1;
+            lfoPhase[2] += rM2;
+            lfoPhase[3] += rLo;
+            for (float& ph : lfoPhase)
+                if (ph >= 1.f)
+                    ph -= std::floor(ph);
+
+            const bool updateCoeffs = (n % kCoeffUpdateInterval) == 0;
+
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                const float phaseShift = (numCh > 1 && ch == 1) ? stereoRad : 0.f;
+                const float sHi = std::sin(kTwoPi * lfoPhase[0] + phaseShift);
+                const float sM1 = std::sin(kTwoPi * lfoPhase[1] + phaseShift);
+                const float sM2 = std::sin(kTwoPi * lfoPhase[2] + phaseShift);
+                const float sLo = std::sin(kTwoPi * lfoPhase[3] + phaseShift);
+
+                if (updateCoeffs)
+                {
+                    const float hiCf = modCfHz(baseHiCf, 500.f, 18000.f, sHi, dHiC);
+                    const float hiGain = modGainDb(baseHiG, sHi, dHiG);
+                    const float m1f = modCfHz(baseM1f, 20.f, 18000.f, sM1, dM1C);
+                    const float m1bw = modBwHz(baseM1bw, 85.f, 2000.f, sM1, dM1B);
+                    const float m1g = modGainDb(baseM1g, sM1, dM1G);
+                    const float m2f = modCfHz(baseM2f, 20.f, 18000.f, sM2, dM2C);
+                    const float m2bw = modBwHz(baseM2bw, 85.f, 2000.f, sM2, dM2B);
+                    const float m2g = modGainDb(baseM2g, sM2, dM2G);
+                    const float loCf = modCfHz(baseLoCf, 20.f, 10000.f, sLo, dLoC);
+                    const float loGain = modGainDb(baseLoG, sLo, dLoG);
+
+                    updateFiltersForChannel(ch, sr, loCf, loGain, m1f, m1bw, m1g, m2f, m2bw, m2g, hiCf, hiGain);
+                }
+
+                float* data = buffer.getWritePointer(ch);
+                float x = data[n];
+                x = applyCoreSaturation(x, coreDrive);
+                const size_t i = static_cast<size_t>(ch);
+                x = lowShelfPerChannel[i].processSample(x);
+                x = mid1PeakPerChannel[i].processSample(x);
+                x = mid2PeakPerChannel[i].processSample(x);
+                x = highShelfPerChannel[i].processSample(x);
+                if (!std::isfinite(x))
+                    x = 0.0f;
+                data[n] = x;
+            }
+        }
+    }
+
+    const bool limOn = apvts.getRawParameterValue("outLimOn")->load() > 0.5f;
+    if (limOn)
+    {
+        outputLimiter.setThreshold(apvts.getRawParameterValue("outLimThresh")->load());
+        outputLimiter.setRelease(apvts.getRawParameterValue("outLimRelease")->load());
+        juce::dsp::AudioBlock<float> fullBlock(buffer);
+        auto chBlock = fullBlock.getSubsetChannelBlock(0, static_cast<size_t>(numCh));
+        auto region = chBlock.getSubBlock(0, static_cast<size_t>(numSamps));
+        juce::dsp::ProcessContextReplacing<float> ctx(region);
+        outputLimiter.process(ctx);
+    }
 
     for (int ch = 0; ch < numCh; ++ch)
     {
         float* data = buffer.getWritePointer(ch);
         for (int n = 0; n < numSamps; ++n)
         {
-            float x = data[n];
-            x = applyCoreSaturation(x, coreDrive);
-            const size_t i = static_cast<size_t>(ch);
-            x = lowShelfPerChannel[i].processSample(x);
-            x = mid1PeakPerChannel[i].processSample(x);
-            x = mid2PeakPerChannel[i].processSample(x);
-            x = highShelfPerChannel[i].processSample(x);
-            if (!std::isfinite(x))
-                x = 0.0f;
-            data[n] = x;
+            if (!std::isfinite(data[n]))
+                data[n] = 0.f;
         }
     }
 }

@@ -7,40 +7,26 @@ class ParaEQ301AudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:
     explicit ParaEQ301AudioProcessorEditor(ParaEQ301AudioProcessor&);
-    ~ParaEQ301AudioProcessorEditor() override = default;
+    ~ParaEQ301AudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
+    struct EqTabContent;
+    struct LfoTabContent;
+    struct OutTabContent;
+
     ParaEQ301AudioProcessor& proc;
 
-    struct BandKnobs
-    {
-        juce::Label bandLabel;
-        juce::Slider cf;
-        juce::Label cfLabel;
-        juce::Slider bw;
-        juce::Label bwLabel;
-        juce::Slider gain;
-        juce::Label gainLabel;
-        bool hasBw = true;
-        bool hasCfInLeftColumn = false;
-    };
+    std::unique_ptr<EqTabContent> eqPage;
+    std::unique_ptr<LfoTabContent> lfoPage;
+    std::unique_ptr<OutTabContent> outPage;
 
-    BandKnobs hi;
-    BandKnobs mid1;
-    BandKnobs mid2;
-    BandKnobs low;
-
-    juce::Label coreSectionLabel;
-    juce::Slider coreSat;
-    juce::Label coreSatLabel;
+    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
-
-    static void styleKnob(juce::Slider& s, const juce::String& name);
-    static void styleLabel(juce::Label& l, const juce::String& text);
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessorEditor)
 };
