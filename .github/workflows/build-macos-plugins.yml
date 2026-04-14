@@ -1,0 +1,132 @@
+# Universal macOS binaries: arm64 (Apple Silicon) + x86_64 (Intel).
+# Produces a ZIP (manual copy to ~/Library/Audio/Plug-Ins) and a .pkg (installs to /Library/Audio/Plug-Ins).
+
+name: Build macOS AU + VST3 (universal)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: build-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CMake and Ninja
+        run: brew install cmake ninja
+
+      - name: Configure (universal arm64 + x86_64)
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Verify fat binaries
+        run: |
+          set -euo pipefail
+          AU_BIN="build/ParaEQ301_artefacts/Release/AU/ParaEQ 301.component/Contents/MacOS/ParaEQ 301"
+          VST_BIN="build/ParaEQ301_artefacts/Release/VST3/ParaEQ 301.vst3/Contents/MacOS/ParaEQ 301"
+          echo "=== AU ==="
+          lipo -info "$AU_BIN"
+          echo "=== VST3 ==="
+          lipo -info "$VST_BIN"
+          lipo -info "$AU_BIN" | grep -q arm64
+          lipo -info "$AU_BIN" | grep -q x86_64
+          lipo -info "$VST_BIN" | grep -q arm64
+          lipo -info "$VST_BIN" | grep -q x86_64
+
+      - name: Package ZIP and installer PKG
+        id: package
+        run: |
+          set -euo pipefail
+          AU_SRC="build/ParaEQ301_artefacts/Release/AU/ParaEQ 301.component"
+          VST_SRC="build/ParaEQ301_artefacts/Release/VST3/ParaEQ 301.vst3"
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VER="${{ github.event.release.tag_name }}"
+            PKG_VER="${VER#v}"
+            if ! [[ "$PKG_VER" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+              PKG_VER="1.0.0"
+            fi
+          else
+            VER="1.0.0-build.${{ github.run_number }}"
+            PKG_VER="1.0.${{ github.run_number }}"
+          fi
+          SAFE_VER="${VER//\//-}"
+
+          STAGE="staging/ParaEQ301-${SAFE_VER}"
+          mkdir -p "${STAGE}/AU" "${STAGE}/VST3"
+          cp -R "${AU_SRC}" "${STAGE}/AU/"
+          cp -R "${VST_SRC}" "${STAGE}/VST3/"
+
+          cat > "${STAGE}/INSTALL.txt" << 'EOF'
+          ParaEQ 301 — macOS (Audio Unit + VST3, universal: Apple Silicon + Intel)
+
+          ZIP install (current user, no admin):
+            1) Copy "ParaEQ 301.component" to:
+               ~/Library/Audio/Plug-Ins/Components/
+            2) Copy "ParaEQ 301.vst3" to:
+               ~/Library/Audio/Plug-Ins/VST3/
+            3) Rescan plugins in your DAW; restart if needed.
+
+          PKG install (admin password — system-wide):
+            Installs the same plug-ins under:
+              /Library/Audio/Plug-Ins/Components/
+              /Library/Audio/Plug-Ins/VST3/
+          EOF
+
+          ZIP_NAME="ParaEQ301-macos-universal-${SAFE_VER}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "${STAGE}" "${ZIP_NAME}"
+
+          PKG_ROOT="pkgroot"
+          rm -rf "${PKG_ROOT}"
+          mkdir -p "${PKG_ROOT}/Library/Audio/Plug-Ins/Components"
+          mkdir -p "${PKG_ROOT}/Library/Audio/Plug-Ins/VST3"
+          cp -R "${AU_SRC}" "${PKG_ROOT}/Library/Audio/Plug-Ins/Components/"
+          cp -R "${VST_SRC}" "${PKG_ROOT}/Library/Audio/Plug-Ins/VST3/"
+          PKG_NAME="ParaEQ301-macos-universal-${SAFE_VER}.pkg"
+          pkgbuild \
+            --root "${PKG_ROOT}" \
+            --identifier com.paraeq.paraeq301.plugins \
+            --version "${PKG_VER}" \
+            --install-location / \
+            "${PKG_NAME}"
+
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "pkg_name=${PKG_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ParaEQ301-macos-universal
+          path: |
+            ParaEQ301-macos-universal-*.zip
+            ParaEQ301-macos-universal-*.pkg
+          if-no-files-found: error
+
+      - name: Attach assets to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.package.outputs.zip_name }}" \
+            "${{ steps.package.outputs.pkg_name }}" \
+            --clobber
