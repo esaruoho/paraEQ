@@ -3,7 +3,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-class ParaEQ301AudioProcessorEditor : public juce::AudioProcessorEditor
+class ParaEQ301AudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit ParaEQ301AudioProcessorEditor(ParaEQ301AudioProcessor&);
@@ -13,17 +13,23 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override;
     struct EqTabContent;
+    struct CurveTabContent;
     struct LfoTabContent;
     struct OutTabContent;
 
     ParaEQ301AudioProcessor& proc;
 
     std::unique_ptr<EqTabContent> eqPage;
+    std::unique_ptr<CurveTabContent> curvePage;
     std::unique_ptr<LfoTabContent> lfoPage;
     std::unique_ptr<OutTabContent> outPage;
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+
+    juce::Label meterInLabel;
+    juce::Label meterOutLabel;
 
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
