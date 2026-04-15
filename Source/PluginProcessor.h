@@ -40,7 +40,8 @@ public:
     float getDebugInputRms() const noexcept { return debugInRms.load(std::memory_order_relaxed); }
     float getDebugOutputRms() const noexcept { return debugOutRms.load(std::memory_order_relaxed); }
 
-    /** Combined linear IIR chain magnitude (low shelf → mid peaks → high shelf), channel 0 coeffs. dB = 20·log10|H|. */
+    /** Combined linear IIR chain magnitude (low shelf -> mid peaks -> high shelf), channel 0 coeffs. dB = 20·log10|H|.
+        Frequencies are in Hz; magnitudes are evaluated at currentSampleRate (must match coefficient design). sampleRate arg ignored. */
     void getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz, float* magnitudesDb, int numPoints) const noexcept;
 
     /** Per-band LFO phase 0–1 for Motion tab UI (Hi, M1, M2, Lo). Audio thread writes; GUI reads. */
@@ -64,6 +65,9 @@ public:
     static constexpr int kSpectrumFftOrder = 10;
     static constexpr int kSpectrumFftSize = 1 << kSpectrumFftOrder;
     static constexpr int kSpectrumBins = kSpectrumFftSize / 2 + 1;
+
+    /** Must match EQ / Curve tab log-spaced plot point count (PluginEditor.cpp nPts). */
+    static constexpr int kEqCurvePlotPoints = 220;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -124,6 +128,13 @@ private:
     mutable std::atomic<std::uint32_t> spectrumSeq { 0 };
 
     void spectrumPushPrePostEq(float beforeEq, float afterEq) noexcept;
+
+    /** Rebuilds log-spaced Hz table (same formula as editor) and publishes |H| dB for ch0 IIR chain. */
+    void publishEqCurveMagnitudeSnapshot() noexcept;
+
+    double eqCurveFreqHz[kEqCurvePlotPoints] {};
+    float eqCurveMagPublished[kEqCurvePlotPoints] {};
+    mutable std::atomic<std::uint32_t> eqCurveMagSeq { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessor)
 };

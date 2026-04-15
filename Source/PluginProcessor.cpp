@@ -55,6 +55,27 @@ namespace
         return juce::jlimit(minHz, maxHz, base + sinVal * depth01 * span);
     }
 
+    /** Integer Hz for EQ frequencies — matches SliderAttachment + host display (avoids 7-decimal default). */
+    juce::AudioParameterFloatAttributes eqHzParameterAttributes()
+    {
+        return juce::AudioParameterFloatAttributes()
+            .withLabel("Hz")
+            .withStringFromValueFunction([](float v, int)
+            {
+                return juce::String(juce::roundToInt(v)) + " Hz";
+            })
+            .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); });
+    }
+
+    /** LFO rate: two decimals, still readable in narrow text boxes. */
+    juce::AudioParameterFloatAttributes lfoRateHzParameterAttributes()
+    {
+        return juce::AudioParameterFloatAttributes()
+            .withLabel("Hz")
+            .withStringFromValueFunction([](float v, int) { return juce::String(v, 2) + " Hz"; })
+            .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); });
+    }
+
     float blockRms(const juce::AudioBuffer<float>& buf, int numCh, int numSamps) noexcept
     {
         if (numCh <= 0 || numSamps <= 0)
@@ -91,7 +112,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         "hiCf", "Hi Cf",
         freqRangeSkewed(500.0f, 18000.0f, 3000.0f),
         5000.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "hiGain", "Hi Gain",
@@ -103,13 +124,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         "mid1Cf", "Mid1 Cf",
         freqRangeSkewed(20.0f, 18000.0f, 1000.0f),
         1000.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "mid1Bw", "Mid1 Bw",
         freqRangeSkewed(85.0f, 2000.0f, 400.0f),
         400.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "mid1Gain", "Mid1 Gain",
@@ -121,13 +142,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         "mid2Cf", "Mid2 Cf",
         freqRangeSkewed(20.0f, 18000.0f, 1000.0f),
         2500.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "mid2Bw", "Mid2 Bw",
         freqRangeSkewed(85.0f, 2000.0f, 400.0f),
         400.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "mid2Gain", "Mid2 Gain",
@@ -139,7 +160,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         "lowCf", "Low Cf",
         freqRangeSkewed(20.0f, 10000.0f, 200.0f),
         120.0f,
-        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        eqHzParameterAttributes()));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "lowGain", "Low Gain",
@@ -162,23 +183,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
 
     auto lfoRateRange = juce::NormalisableRange<float>(0.02f, 14.0f, 0.01f, 0.35f);
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiRate", "Hi LFO Hz", lfoRateRange, 2.0f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiRate", "Hi LFO Hz", lfoRateRange, 2.0f, lfoRateHzParameterAttributes()));
     const juce::NormalisableRange<float> lfoDepthRange(0.f, 1.f, 0.01f);
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiDepthGain", "Hi LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiDepthCf", "Hi LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1Rate", "M1 LFO Hz", lfoRateRange, 2.0f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1Rate", "M1 LFO Hz", lfoRateRange, 2.0f, lfoRateHzParameterAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthGain", "M1 LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthCf", "M1 LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM1DepthBw", "M1 LFO bw", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2Rate", "M2 LFO Hz", lfoRateRange, 2.0f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2Rate", "M2 LFO Hz", lfoRateRange, 2.0f, lfoRateHzParameterAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthGain", "M2 LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthCf", "M2 LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoM2DepthBw", "M2 LFO bw", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoRate", "Lo LFO Hz", lfoRateRange, 2.0f, juce::AudioParameterFloatAttributes().withLabel("Hz")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoRate", "Lo LFO Hz", lfoRateRange, 2.0f, lfoRateHzParameterAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoDepthGain", "Lo LFO gain", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoLoDepthCf", "Lo LFO cf", lfoDepthRange, 0.f, juce::AudioParameterFloatAttributes()));
 
@@ -277,6 +298,19 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
                               apvts.getRawParameterValue("lowCf")->load(),
                               apvts.getRawParameterValue("lowGain")->load(),
                               false);
+
+    {
+        const double fLo = 30.0;
+        const double fHi = juce::jmin(20000.0, currentSampleRate * 0.48);
+        const double logLo = std::log(fLo);
+        const double logHi = std::log(fHi);
+        for (int i = 0; i < kEqCurvePlotPoints; ++i)
+        {
+            const double t = (double) i / (double) (kEqCurvePlotPoints - 1);
+            eqCurveFreqHz[(size_t) i] = std::exp(logLo + t * (logHi - logLo));
+        }
+    }
+    publishEqCurveMagnitudeSnapshot();
 }
 
 void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
@@ -298,11 +332,62 @@ void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(float hiCf, float hiGain
     motionUiEngaged.store(engaged ? (std::uint8_t) 1 : (std::uint8_t) 0, std::memory_order_relaxed);
 }
 
+void ParaEQ301AudioProcessor::publishEqCurveMagnitudeSnapshot() noexcept
+{
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    const double nyq = sr * 0.499;
+
+    eqCurveMagSeq.fetch_add(1u, std::memory_order_acq_rel);
+
+    const auto* cLo = lowShelfPerChannel[0].coefficients.get();
+    const auto* cM1 = mid1PeakPerChannel[0].coefficients.get();
+    const auto* cM2 = mid2PeakPerChannel[0].coefficients.get();
+    const auto* cHi = highShelfPerChannel[0].coefficients.get();
+
+    for (int i = 0; i < kEqCurvePlotPoints; ++i)
+    {
+        double f = juce::jlimit(1.0, nyq, eqCurveFreqHz[(size_t) i]);
+        double m = 1.0;
+        if (cLo != nullptr)
+            m *= cLo->getMagnitudeForFrequency(f, sr);
+        if (cM1 != nullptr)
+            m *= cM1->getMagnitudeForFrequency(f, sr);
+        if (cM2 != nullptr)
+            m *= cM2->getMagnitudeForFrequency(f, sr);
+        if (cHi != nullptr)
+            m *= cHi->getMagnitudeForFrequency(f, sr);
+
+        m = juce::jmax(1.0e-12, m);
+        eqCurveMagPublished[(size_t) i] = static_cast<float>(juce::Decibels::gainToDecibels(m));
+    }
+
+    eqCurveMagSeq.fetch_add(1u, std::memory_order_release);
+}
+
 void ParaEQ301AudioProcessor::getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz,
                                                      float* magnitudesDb, int numPoints) const noexcept
 {
-    const double sr = sampleRate > 0.0 ? sampleRate : currentSampleRate;
+    // Coefficients are built for currentSampleRate (prepareToPlay / processBlock). Evaluating |H(f)|
+    // at any other rate skews the curve (often pushing the trace to the top of a fixed dB scale).
+    juce::ignoreUnused(sampleRate);
+    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
     const double nyq = sr * 0.499;
+
+    if (numPoints == kEqCurvePlotPoints)
+    {
+        const std::uint32_t a = eqCurveMagSeq.load(std::memory_order_acquire);
+        if (a >= 2u && (a & 1u) == 0u)
+        {
+            float tmp[kEqCurvePlotPoints];
+            std::memcpy(tmp, eqCurveMagPublished, sizeof(tmp));
+            const std::uint32_t b = eqCurveMagSeq.load(std::memory_order_acquire);
+            if (a == b)
+            {
+                std::memcpy(magnitudesDb, tmp, sizeof(tmp));
+                return;
+            }
+        }
+    }
 
     const auto* cLo = lowShelfPerChannel[0].coefficients.get();
     const auto* cM1 = mid1PeakPerChannel[0].coefficients.get();
@@ -520,6 +605,8 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             }
         }
     }
+
+    publishEqCurveMagnitudeSnapshot();
 
     const bool limOn = apvts.getRawParameterValue("outLimOn")->load() > 0.5f;
     if (limOn)

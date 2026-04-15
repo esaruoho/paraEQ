@@ -32,8 +32,8 @@ namespace
     }
 
     // EQ value column: wide enough for "18000 Hz" / "-30.0 dB" in monospace without ellipsis or horizontal squish.
-    constexpr int kEqSliderColW = 72;
-    constexpr int kEqTextBoxW = 68;
+    constexpr int kEqSliderColW = 78;
+    constexpr int kEqTextBoxW = 74;
     constexpr int kEqTextBoxH = 20;
     constexpr int kEqSliderColumnH = kKnobSize + kEqTextBoxH;
     constexpr int kEqRowHeight = kEqSliderColumnH + kGapCaption + kCaptionH;
@@ -186,20 +186,21 @@ namespace
                 break;
         }
         s = s.trimEnd();
-        return s.isEmpty() ? juce::String("(nothing — all 0%)") : s;
+        return s.isEmpty() ? juce::String("(nothing - all 0%)") : s;
     }
 
     juce::String buildEqMotionStatusLine(juce::AudioProcessorValueTreeState& ap)
     {
         if (!motionLfoDepthActive(ap))
-            return "Motion (LFO): idle — the EQ tab is static. Open Curve + Motion and raise any EQ gain / EQ freq / EQ width % to animate filters (sliders stay as center points).";
+            return "Motion (LFO): idle - EQ is static. Open Curve + Motion and raise EQ gain / freq / width % to animate.\n"
+                   "EQ knobs stay as center points.";
 
-        return "Motion is changing filters (not these knobs):  Hi → "
-               + eqMotionTargetsSummary(ap, 0) + "   Mid1 → "
-               + eqMotionTargetsSummary(ap, 1) + "   Mid2 → "
-               + eqMotionTargetsSummary(ap, 2) + "   Low → "
-               + eqMotionTargetsSummary(ap, 3)
-               + "   |   Watch the green curve above — it is the live EQ.";
+        return "Motion is moving the audio EQ (not these EQ knobs). Targets per band:\n"
+               "Hi: " + eqMotionTargetsSummary(ap, 0) + "\n"
+               "Mid1: " + eqMotionTargetsSummary(ap, 1) + "\n"
+               "Mid2: " + eqMotionTargetsSummary(ap, 2) + "\n"
+               "Low: " + eqMotionTargetsSummary(ap, 3) + "\n"
+               "Curve + Motion: white/blue = FFT spectrum before/after EQ; amber = IIR model (not audio).";
     }
 
     juce::String formatMotionLiveReadout(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
@@ -209,12 +210,160 @@ namespace
         if (!s.motionEngaged)
             t = "Filters now (L channel) match the EQ tab. Set any amount below > 0% to hear LFO motion.\n";
         else
-            t = "Filters now (L channel) — these numbers sweep with the LFO. EQ tab = rest point only (sliders do not move).\n";
+            t = "Filters now (L channel) - these numbers sweep with the LFO. EQ tab = rest point only (sliders do not move).\n";
         t += "Hi  " + ri(s.hiCfHz) + " Hz  " + juce::String(s.hiGainDb, 1) + " dB     ";
         t += "M1  " + ri(s.mid1CfHz) + " Hz  " + ri(s.mid1BwHz) + " Hz BW  " + juce::String(s.mid1GainDb, 1) + " dB\n";
         t += "M2  " + ri(s.mid2CfHz) + " Hz  " + ri(s.mid2BwHz) + " Hz BW  " + juce::String(s.mid2GainDb, 1) + " dB     ";
         t += "Lo  " + ri(s.loCfHz) + " Hz  " + juce::String(s.loGainDb, 1) + " dB";
         return t;
+    }
+
+    /** Fixed dB window (0 dB vertical centre = flat / unity gain). Optional coloured markers at Lo/M1/M2/Hi centre Hz. */
+    void paintEqMagnitudeCurveInRect(juce::Graphics& g,
+                                     juce::Rectangle<int> graphOuter,
+                                     const std::vector<double>& freqHz,
+                                     const float* magDb,
+                                     int nPts,
+                                     float dMin,
+                                     float dMax,
+                                     double fLo,
+                                     double fHi,
+                                     juce::AudioProcessorValueTreeState* apMarkers,
+                                     juce::Colour curveStrokeColour,
+                                     bool drawRoundedBackground)
+    {
+        if (graphOuter.getHeight() < 22 || nPts < 2)
+            return;
+
+        const double logLo = std::log(fLo);
+        const double logHi = std::log(fHi);
+
+        // Left ruler + plot + right scale labels (same numeric range, so max/min are obvious).
+        constexpr int kRulerW = 54;
+        constexpr int kRightScaleW = 44;
+        juce::Rectangle<int> band = graphOuter;
+        auto ruler = band.removeFromLeft(kRulerW);
+        auto scaleRight = band.removeFromRight(kRightScaleW);
+        auto curve = band;
+
+        if (drawRoundedBackground)
+        {
+            g.setColour(juce::Colour(0xff1a1a1a));
+            g.fillRoundedRectangle(graphOuter.toFloat(), 3.f);
+            g.setColour(juce::Colour(0xff333333));
+            g.drawRoundedRectangle(graphOuter.toFloat(), 3.f, 1.f);
+        }
+
+        auto xOfF = [&](double f) -> float
+        {
+            f = juce::jlimit(fLo, fHi, f);
+            const double lf = std::log(f);
+            return (float) (curve.getX() + (lf - logLo) / (logHi - logLo) * (double) curve.getWidth());
+        };
+
+        auto yOfDb = [&](float db) -> float
+        {
+            const float n = juce::jlimit(dMin, dMax, db);
+            const float norm = (n - dMin) / (dMax - dMin);
+            return (float) curve.getBottom() - norm * (float) curve.getHeight();
+        };
+
+        for (float db : { -24.f, -18.f, -12.f, -9.f, -6.f, -3.f, 3.f, 6.f, 9.f, 12.f, 18.f, 24.f })
+        {
+            if (db <= dMin + 0.001f || db >= dMax - 0.001f || std::abs((double) db) < 0.01)
+                continue;
+            const float y = yOfDb(db);
+            g.setColour(juce::Colour(0xff2a2a2a));
+            g.drawHorizontalLine(juce::roundToInt(y), (float) curve.getX(), (float) curve.getRight());
+        }
+
+        g.setColour(kTextMuted);
+        g.setFont(8.5f);
+        for (double hz : { 100.0, 1000.0, 10000.0 })
+        {
+            if (hz < fLo || hz > fHi)
+                continue;
+            const float x = xOfF(hz);
+            g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY(), (float) curve.getBottom());
+            const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
+            g.drawText(lab, juce::roundToInt(x) - 11, curve.getBottom() + 1, 22, 9, juce::Justification::centred);
+        }
+
+        if (apMarkers != nullptr)
+        {
+            struct BandTag
+            {
+                const char* paramId;
+                const char* tag;
+                juce::Colour col;
+            };
+            const BandTag tags[] = { { "lowCf", "Lo", juce::Colour(0xff5dade2) },
+                                     { "mid1Cf", "M1", juce::Colour(0xfff5b041) },
+                                     { "mid2Cf", "M2", juce::Colour(0xffaf7ac5) },
+                                     { "hiCf", "Hi", juce::Colour(0xff7ecbff) } };
+            for (const auto& t : tags)
+            {
+                const float hz = apMarkers->getRawParameterValue(t.paramId)->load();
+                if (hz < (float) fLo || hz > (float) fHi)
+                    continue;
+                const float x = xOfF(static_cast<double>(hz));
+                g.setColour(t.col.withAlpha(0.38f));
+                g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY() + 13, (float) curve.getBottom());
+                g.setFont(8.2f);
+                g.setColour(t.col.withAlpha(0.92f));
+                g.drawText(t.tag, juce::roundToInt(x) - 10, curve.getY() + 1, 20, 11, juce::Justification::centred);
+            }
+        }
+
+        const float y0 = yOfDb(0.f);
+        g.setColour(juce::Colour(0xff777777));
+        for (float x = (float) curve.getX(); x < (float) curve.getRight(); x += 10.f)
+            g.drawLine(x, y0, juce::jmin(x + 5.5f, (float) curve.getRight()), y0, 1.25f);
+
+        const juce::String topDbLab = (dMax > 0.001f ? juce::String("+") : juce::String())
+                                      + juce::String(static_cast<int>(dMax)) + " dB";
+        const juce::String midDbLab = "0 dB";
+        const juce::String botDbLab = juce::String(static_cast<int>(dMin)) + " dB";
+
+        auto yForLabel = [&](float db) -> int
+        {
+            const int y = juce::roundToInt(yOfDb(db) - 5);
+            return juce::jlimit(ruler.getY() + 1, ruler.getBottom() - 11, y);
+        };
+
+        g.setFont(8.2f);
+        g.setColour(kTextBright.withAlpha(0.9f));
+        g.drawText(topDbLab, ruler.getX() + 2, yForLabel(dMax), ruler.getWidth() - 4, 11, juce::Justification::right);
+        g.drawText(midDbLab, ruler.getX() + 2, yForLabel(0.f), ruler.getWidth() - 4, 11, juce::Justification::right);
+        g.drawText(botDbLab, ruler.getX() + 2, yForLabel(dMin), ruler.getWidth() - 4, 11, juce::Justification::right);
+
+        g.setFont(8.2f);
+        g.setColour(kTextMuted);
+        g.drawText(topDbLab, scaleRight.getX(), yForLabel(dMax), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+        g.drawText(midDbLab, scaleRight.getX(), yForLabel(0.f), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+        g.drawText(botDbLab, scaleRight.getX(), yForLabel(dMin), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+
+        juce::Path path;
+        bool started = false;
+        for (int i = 0; i < nPts; ++i)
+        {
+            float dbg = magDb[(size_t) i];
+            if (!std::isfinite(dbg))
+                dbg = 0.f;
+            const float x = xOfF(freqHz[(size_t) i]);
+            const float y = yOfDb(dbg);
+            if (!started)
+            {
+                path.startNewSubPath(x, y);
+                started = true;
+            }
+            else
+            {
+                path.lineTo(x, y);
+            }
+        }
+        g.setColour(curveStrokeColour.withAlpha(0.95f));
+        g.strokePath(path, juce::PathStrokeType(2.2f));
     }
 
     /** Draws combined low shelf + 2 peaks + high shelf magnitude; emphasises 0 dB baseline. */
@@ -234,7 +383,7 @@ namespace
         {
             g.setFont(9.2f);
             g.setColour(kAccentBlue.withAlpha(0.9f));
-            g.drawText("Lo / Hi = low shelf & high shelf (tilt EQ). Shelf Hz = turnover where the curve aims at Gain — not a low-pass or high-pass (nothing is fully muted).",
+            g.drawText("Lo / Hi = low shelf & high shelf (tilt EQ). Shelf Hz = turnover where the curve aims at Gain - not a low-pass or high-pass (nothing is fully muted).",
                        header.removeFromTop(shelfHintH), juce::Justification::centredLeft, true);
         }
 
@@ -243,16 +392,16 @@ namespace
         {
             g.setFont(9.8f);
             g.setColour(kAccentGreen.withAlpha(0.95f));
-            g.drawText("Curve = live EQ magnitude (left channel), including Motion — it should move while audio runs.",
+            g.drawText("Green = combined EQ gain vs flat. Plot is +24 dB (top) to -24 dB (bottom); centre = 0 dB unity. Includes Motion.",
                        header.removeFromTop(14), juce::Justification::centredLeft, true);
             g.setColour(kTextMuted);
-            g.drawText("EQ tab knobs stay put; they are the targets the LFO moves around.",
+            g.drawText("EQ tab knobs stay put; they are the rest points the LFO moves around.",
                        header, juce::Justification::centredLeft, true);
         }
         else
         {
             g.setFont(10.5f);
-            g.drawText("Signal path: Low shelf → Mid1 peak → Mid2 peak → High shelf (same as audio). Dashed = 0 dB flat.",
+            g.drawText("Signal path: Low shelf, Mid1, Mid2, High shelf. Dashed = 0 dB (flat). Top/bottom of plot = +24 / -24 dB combined gain (per-band knobs allow +/-30 dB). Tags = Hz knobs.",
                        header, juce::Justification::centredLeft, true);
         }
         g.setColour(kTextBright);
@@ -278,73 +427,8 @@ namespace
         }
         proc.getEqChainMagnitudeDb(sr, freqScratch.data(), magScratch.data(), nPts);
 
-        juce::Rectangle<int> graph = plot;
-        g.setColour(juce::Colour(0xff1a1a1a));
-        g.fillRoundedRectangle(graph.toFloat(), 3.f);
-        g.setColour(juce::Colour(0xff333333));
-        g.drawRoundedRectangle(graph.toFloat(), 3.f, 1.f);
-
-        auto xOfF = [&](double f) -> float
-        {
-            f = juce::jlimit(fLo, fHi, f);
-            const double lf = std::log(f);
-            return (float) (graph.getX() + (lf - logLo) / (logHi - logLo) * (double) graph.getWidth());
-        };
-
-        auto yOfDb = [&](float db) -> float
-        {
-            const float n = juce::jlimit(dMin, dMax, db);
-            const float norm = (n - dMin) / (dMax - dMin);
-            return (float) graph.getBottom() - norm * (float) graph.getHeight();
-        };
-
-        for (float db : { -18.f, -12.f, -6.f, 6.f, 12.f, 18.f })
-        {
-            if (db <= dMin || db >= dMax || db == 0.f)
-                continue;
-            const float y = yOfDb(db);
-            g.setColour(juce::Colour(0xff2a2a2a));
-            g.drawHorizontalLine(juce::roundToInt(y), (float) graph.getX(), (float) graph.getRight());
-        }
-
-        g.setColour(kTextMuted);
-        g.setFont(8.5f);
-        for (double hz : { 100.0, 1000.0, 10000.0 })
-        {
-            if (hz < fLo || hz > fHi)
-                continue;
-            const float x = xOfF(hz);
-            g.drawVerticalLine(juce::roundToInt(x), (float) graph.getY(), (float) graph.getBottom());
-            const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
-            g.drawText(lab, juce::roundToInt(x) - 11, graph.getBottom() + 1, 22, 9, juce::Justification::centred);
-        }
-
-        const float y0 = yOfDb(0.f);
-        g.setColour(juce::Colour(0xff666666));
-        for (float x = (float) graph.getX(); x < (float) graph.getRight(); x += 10.f)
-            g.drawLine(x, y0, juce::jmin(x + 5.5f, (float) graph.getRight()), y0, 1.1f);
-        g.setColour(kTextMuted);
-        g.setFont(8.5f);
-        g.drawText("0 dB", graph.getRight() - 36, juce::roundToInt(y0) - 11, 34, 10, juce::Justification::right);
-
-        juce::Path path;
-        bool started = false;
-        for (int i = 0; i < nPts; ++i)
-        {
-            const float x = xOfF(freqScratch[(size_t) i]);
-            const float y = yOfDb(magScratch[(size_t) i]);
-            if (!started)
-            {
-                path.startNewSubPath(x, y);
-                started = true;
-            }
-            else
-            {
-                path.lineTo(x, y);
-            }
-        }
-        g.setColour(kAccentGreen.withAlpha(0.95f));
-        g.strokePath(path, juce::PathStrokeType(2.2f));
+        paintEqMagnitudeCurveInRect(g, plot, freqScratch, magScratch.data(), nPts, dMin, dMax, fLo, fHi,
+                                    &proc.getAPVTS(), kAccentGreen, true);
     }
 }
 
@@ -461,7 +545,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component, pri
         low.gain.setTooltip("How much boost or cut applies in the bass region (0 dB = no change). Negative = gentle low cut.");
 
         motionStatus.setJustificationType(juce::Justification::topLeft);
-        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(10.2f)));
+        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(9.6f)));
         motionStatus.setColour(juce::Label::textColourId, kAccentBlue);
         motionStatus.setMinimumHorizontalScale(1.0f);
         motionStatus.setText(buildEqMotionStatusLine(ap), juce::dontSendNotification);
@@ -561,10 +645,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component, pri
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(8);
-        constexpr int kEqGraphH = 149;
+        constexpr int kEqGraphH = 158;
         eqGraphBounds = bounds.removeFromTop(kEqGraphH);
         bounds.removeFromTop(5);
-        motionStatus.setBounds(bounds.removeFromTop(44));
+        motionStatus.setBounds(bounds.removeFromTop(78));
         bounds.removeFromTop(6);
 
         constexpr int kFooterH = kSliderColumnH + kGapCaption + kCaptionH + 8;
@@ -637,7 +721,6 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
     juce::Label stereoLabel;
     juce::Slider stereo;
     juce::Label motionHint;
-    juce::Label motionWhatMap;
     juce::Label liveEqReadout;
     Row hi, m1, m2, lo;
     juce::Rectangle<int> lfoDotHi, lfoDotM1, lfoDotM2, lfoDotLo;
@@ -645,7 +728,8 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
     static void sk(juce::Slider& s)
     {
         s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 48, kTextBoxH - 2);
+        // Motion row: LFO Hz uses "12.34 Hz" from parameter string; 56px avoids ellipsis in monospace.
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, kTextBoxH - 2);
         styleSliderDark(s, juce::Colour(0xff4a8ad4));
     }
 
@@ -655,30 +739,22 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
         : proc(processor)
     {
         motionHint.setText(
-            "Motion = separate LFOs that sweep the EQ filters around the values on the EQ tab. The knobs are the center point; the audio path uses moving coefficients.\n"
-            "EQ gain % uses up to ±12 dB around the EQ gain knob (not master volume). Blue dots = LFO phase on that row.",
+            "Hi / M1 / M2 / Lo rows = Motion for those EQ bands. EQ tab knobs = center; LFO moves coeffs. EQ gain depth up to +/-12 dB. Blue dots = LFO phase.",
             juce::dontSendNotification);
         motionHint.setJustificationType(juce::Justification::topLeft);
-        motionHint.setFont(juce::Font(juce::FontOptions().withHeight(10.5f)));
+        motionHint.setFont(juce::Font(juce::FontOptions().withHeight(9.4f)));
         motionHint.setColour(juce::Label::textColourId, kAccentBlue);
+        motionHint.setTooltip(
+            "Hi row -> EQ Hi shelf: Gain dB + Shelf Hz.\n"
+            "M1 / M2 -> EQ Mid1 / Mid2: Gain + Peak Hz + Width Hz.\n"
+            "Lo row -> EQ Low shelf: Gain + Shelf Hz.\n"
+            "EQ tab blue outline = band has Motion. Spectrum on this tab = audio FFT.");
         addAndMakeVisible(motionHint);
-
-        motionWhatMap.setText(
-            "What changes where:\n"
-            "  Hi row here  →  EQ tab Hi band:  Gain dB + Shelf Hz\n"
-            "  M1 / M2      →  EQ Mid1 / Mid2:  Gain dB + Peak Hz + Width Hz\n"
-            "  Lo row here  →  EQ Low band:     Gain dB + Shelf Hz\n"
-            "EQ tab: blue outline = bands with Motion; status line lists which knobs are swept. Curve + Motion tab: spectrum shows live magnitude including Motion.",
-            juce::dontSendNotification);
-        motionWhatMap.setJustificationType(juce::Justification::topLeft);
-        motionWhatMap.setFont(juce::Font(juce::FontOptions().withHeight(10.3f)));
-        motionWhatMap.setColour(juce::Label::textColourId, kTextBright);
-        addAndMakeVisible(motionWhatMap);
 
         liveEqReadout.setJustificationType(juce::Justification::topLeft);
         liveEqReadout.setFont(juce::Font(juce::FontOptions()
                                              .withName(juce::Font::getDefaultMonospacedFontName())
-                                             .withHeight(10.0f)));
+                                             .withHeight(9.2f)));
         liveEqReadout.setColour(juce::Label::textColourId, kTextBright);
         liveEqReadout.setMinimumHorizontalScale(1.0f);
         addAndMakeVisible(liveEqReadout);
@@ -718,8 +794,8 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
             addAndMakeVisible(r.dGain);
             addAndMakeVisible(r.dGainL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, dg, r.dGain));
-            r.dGain.setTooltip("How strong the LFO wobbles this band’s EQ gain knob value. 100% = full ±12 dB swing around the EQ tab. "
-                               "This is not output volume — only the band’s boost/cut is animated.");
+            r.dGain.setTooltip("How strong the LFO wobbles this band's EQ gain knob. 100% = full +/-12 dB swing around the EQ tab. "
+                               "Not output volume - only the band boost/cut is animated.");
 
             sk(r.dCf);
             styleMotionCaption(r.dCfL, "EQ freq");
@@ -752,13 +828,13 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
         };
 
         setupRow(hi, "Hi", false, "lfoHiRate", "lfoHiDepthGain", "lfoHiDepthCf", "",
-                 "This Motion row only drives the EQ tab’s Hi (high shelf) row: it can sweep Gain dB and Shelf Hz by the percentages you set.");
+                 "Motion for EQ Hi shelf: Gain dB and Shelf Hz.");
         setupRow(m1, "M1", true, "lfoM1Rate", "lfoM1DepthGain", "lfoM1DepthCf", "lfoM1DepthBw",
-                 "This row only drives EQ Mid1: Gain dB, Peak Hz, and Width Hz — same three knobs as on the EQ tab.");
+                 "Motion for EQ Mid1: Gain, Peak Hz, Width Hz.");
         setupRow(m2, "M2", true, "lfoM2Rate", "lfoM2DepthGain", "lfoM2DepthCf", "lfoM2DepthBw",
-                 "This row only drives EQ Mid2: Gain dB, Peak Hz, and Width Hz — same three knobs as on the EQ tab.");
+                 "Motion for EQ Mid2: Gain, Peak Hz, Width Hz.");
         setupRow(lo, "Lo", false, "lfoLoRate", "lfoLoDepthGain", "lfoLoDepthCf", "",
-                 "This Motion row only drives the EQ tab’s Low (low shelf) row: Gain dB and Shelf Hz.");
+                 "Motion for EQ Low shelf: Gain dB and Shelf Hz.");
 
         startTimerHz(24);
     }
@@ -775,7 +851,7 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
 
     void placeRow(Row& r, juce::Rectangle<int> rowArea, juce::Rectangle<int>& lfoDotOut)
     {
-        const int kw = 48;
+        const int kw = 56;
         const int colGap = 6;
         const int phaseS = 14;
         const int titleW = 30;
@@ -801,17 +877,15 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
-        motionHint.setBounds(b.removeFromTop(50));
-        b.removeFromTop(4);
-        motionWhatMap.setBounds(b.removeFromTop(62));
-        b.removeFromTop(4);
-        const int topH = kSliderColumnH + 26;
+        motionHint.setBounds(b.removeFromTop(30));
+        b.removeFromTop(3);
+        const int topH = kSliderColumnH + 14;
         auto top = b.removeFromTop(topH);
-        stereoLabel.setBounds(top.getX(), top.getY() + 8, 112, 18);
-        stereo.setBounds(top.getX() + 118, top.getY() + 2, kKnobSize, kSliderColumnH);
-        b.removeFromTop(4);
-        liveEqReadout.setBounds(b.removeFromTop(56));
-        b.removeFromTop(4);
+        stereoLabel.setBounds(top.getX(), top.getY() + 6, 112, 16);
+        stereo.setBounds(top.getX() + 118, top.getY() + 1, kKnobSize, kSliderColumnH);
+        b.removeFromTop(3);
+        liveEqReadout.setBounds(b.removeFromTop(44));
+        b.removeFromTop(3);
 
         placeRow(hi, b.removeFromTop(kRowHeight), lfoDotHi);
         placeRow(m1, b.removeFromTop(kRowHeight), lfoDotM1);
@@ -945,13 +1019,13 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         bounds.removeFromTop(2);
         g.setColour(kTextMuted);
         g.setFont(10.5f);
-        g.drawFittedText("Top: FFT spectrum of the left channel — green = before the 4-band EQ (after Core color if on), blue = after the EQ (before limiter). "
-                         "Bottom: theoretical IIR magnitude from current coefficients (smoothed). Play audio to see the spectrum; silence shows the noise floor.",
+        g.drawFittedText("Top: FFT spectrum (L ch). White/light trace = before 4-band EQ (after Core if on). Blue = after EQ (before limiter). "
+                         "Bottom: amber line = theoretical IIR magnitude only (same scale idea as EQ tab); not part of the FFT A/B.",
                          footer, juce::Justification::topLeft, 7);
 
         g.setFont(12.f);
         g.setColour(kTextBright);
-        g.drawText("Spectrum (before / after EQ) + model curve", bounds.removeFromTop(16), juce::Justification::centred, true);
+        g.drawText("Spectrum: white = before, blue = after  |  below: IIR model (amber)", bounds.removeFromTop(16), juce::Justification::centred, true);
 
         const int meterBlockH = 44;
         auto meters = bounds.removeFromBottom(meterBlockH + 6);
@@ -1045,10 +1119,13 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             const float topDb = juce::jmin(0.f, peak + 4.f);
             const float botDb = topDb - 56.f;
             const float yBottom = (float) graph.getBottom();
+            const float yTopPad = (float) graph.getY() + 2.f;
+            const float yBotPad = yBottom - 3.f;
             auto ySpec = [&](float db) -> float
             {
                 const float t = (db - botDb) / juce::jmax(1.0e-3f, topDb - botDb);
-                return yBottom - juce::jlimit(0.f, 1.f, t) * (float) graph.getHeight();
+                const float yn = yBottom - juce::jlimit(0.f, 1.f, t) * (float) graph.getHeight();
+                return juce::jlimit(yTopPad, yBotPad, yn);
             };
 
             drawLogGrid(graph);
@@ -1072,7 +1149,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             }
             fillB.lineTo(xOfF(freqScratch[(size_t) (nPts - 1)], graph), yBottom);
             fillB.closeSubPath();
-            g.setColour(kAccentGreen.withAlpha(0.22f));
+            g.setColour(kTextBright.withAlpha(0.14f));
             g.fillPath(fillB);
 
             juce::Path lineB;
@@ -1091,8 +1168,8 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
                     lineB.lineTo(x, y);
                 }
             }
-            g.setColour(kAccentGreen.withAlpha(0.75f));
-            g.strokePath(lineB, juce::PathStrokeType(1.4f));
+            g.setColour(kTextBright.withAlpha(0.88f));
+            g.strokePath(lineB, juce::PathStrokeType(1.35f));
 
             juce::Path lineA;
             st = false;
@@ -1111,7 +1188,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
                 }
             }
             g.setColour(kAccentBlue.withAlpha(0.95f));
-            g.strokePath(lineA, juce::PathStrokeType(1.8f));
+            g.strokePath(lineA, juce::PathStrokeType(1.85f));
 
             g.setColour(kTextBright);
             g.setFont(9.5f);
@@ -1124,56 +1201,20 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         {
             g.setColour(kTextMuted);
             g.setFont(10.f);
-            g.drawText("IIR magnitude (smoothed, ±18 dB)", eqArea.removeFromTop(12), juce::Justification::centredLeft, true);
+            g.drawText("IIR model (amber) - math only, not FFT; same band tags as EQ tab", eqArea.removeFromTop(12), juce::Justification::centredLeft, true);
             juce::Rectangle<int> graph = eqArea;
             graph.removeFromBottom(12);
             if (graph.getHeight() < 24)
                 return;
-
-            const float dMin = -18.0f;
-            const float dMax = 18.0f;
 
             g.setColour(juce::Colour(0xff1c1c1c));
             g.fillRoundedRectangle(graph.toFloat(), 4.f);
             g.setColour(juce::Colour(0xff353535));
             g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
 
-            auto yOfDb = [&](float db) -> float
-            {
-                const float n = juce::jlimit(dMin, dMax, db);
-                const float norm = (n - dMin) / (dMax - dMin);
-                return (float) graph.getBottom() - norm * (float) graph.getHeight();
-            };
-
-            for (float db : { -12.f, -6.f, 0.f, 6.f, 12.f })
-            {
-                if (db < dMin || db > dMax)
-                    continue;
-                const float y = yOfDb(db);
-                g.setColour(db == 0.f ? juce::Colour(0xff555555) : juce::Colour(0xff303030));
-                g.drawHorizontalLine(juce::roundToInt(y), (float) graph.getX(), (float) graph.getRight());
-            }
-
-            drawLogGrid(graph);
-
-            juce::Path path;
-            bool started = false;
-            for (int i = 0; i < nPts; ++i)
-            {
-                const float x = xOfF(freqScratch[(size_t) i], graph);
-                const float y = yOfDb(eqMagSmoothed[(size_t) i]);
-                if (!started)
-                {
-                    path.startNewSubPath(x, y);
-                    started = true;
-                }
-                else
-                {
-                    path.lineTo(x, y);
-                }
-            }
-            g.setColour(kAccentGreen.withAlpha(0.9f));
-            g.strokePath(path, juce::PathStrokeType(1.6f));
+            const juce::Colour kIirModelAmber(0xffffc266);
+            paintEqMagnitudeCurveInRect(g, graph, freqScratch, eqMagSmoothed.data(), nPts, -24.f, 24.f, fLo, fHi,
+                                        &proc.getAPVTS(), kIirModelAmber, false);
         }
     }
 
@@ -1229,18 +1270,13 @@ struct ParaEQ301AudioProcessorEditor::CurveMotionTabContent : public juce::Compo
     {
         auto b = getLocalBounds().reduced(4);
         constexpr int kGap = 6;
-        constexpr int kMotionMin = 230;
-        if (b.getHeight() < kMotionMin + 120)
-        {
-            curve.setBounds(b.removeFromTop(juce::jmax(100, b.getHeight() / 3)));
-            b.removeFromTop(kGap);
-            motion.setBounds(b);
-            return;
-        }
-        int curveH = b.getHeight() * 40 / 100;
-        curveH = juce::jlimit(200, 300, curveH);
-        if (curveH + kGap + kMotionMin > b.getHeight())
-            curveH = juce::jmax(180, b.getHeight() - kGap - kMotionMin);
+        // LfoTabContent needs ~530px inner height for Hi+M1+M2+Lo rows + compact chrome; reserve it or rows clip.
+        constexpr int kMotionMinH = 540;
+        const int totalH = b.getHeight();
+        int curveH = totalH * 28 / 100;
+        curveH = juce::jlimit(140, 260, curveH);
+        if (curveH + kGap + kMotionMinH > totalH)
+            curveH = juce::jmax(120, totalH - kGap - kMotionMinH);
         curve.setBounds(b.removeFromTop(curveH));
         b.removeFromTop(kGap);
         motion.setBounds(b);
@@ -1284,7 +1320,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(500, 860);
+    setSize(500, 960);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
