@@ -30,6 +30,8 @@ private:
 
     juce::Label meterInLabel;
     juce::Label meterOutLabel;
+    juce::Rectangle<int> meterInBarBounds;
+    juce::Rectangle<int> meterOutBarBounds;
 
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;

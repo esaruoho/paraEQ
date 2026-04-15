@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace
@@ -34,6 +35,31 @@ namespace
     const juce::Colour kAccentGreen(0xff5cb85c);
     const juce::Colour kAccentBlue(0xff6eb5ff);
 
+    float meterNormalisedFromRms(float rmsLinear) noexcept
+    {
+        if (rmsLinear < 1.0e-9f)
+            return 0.f;
+        const float db = juce::Decibels::gainToDecibels(rmsLinear);
+        return juce::jlimit(0.f, 1.f, (db + 72.f) / 72.f);
+    }
+
+    void paintLevelMeterBar(juce::Graphics& g, juce::Rectangle<int> barArea, float level01, juce::Colour c)
+    {
+        if (barArea.getWidth() < 2 || barArea.getHeight() < 2)
+            return;
+        auto r = barArea.toFloat();
+        g.setColour(juce::Colour(0xff1e1e1e));
+        g.fillRoundedRectangle(r, 3.f);
+        g.setColour(juce::Colour(0xff3d3d3d));
+        g.drawRoundedRectangle(r.reduced(0.4f), 3.f, 1.f);
+        const float fillW = juce::jmax(1.f, (r.getWidth() - 4.f) * level01);
+        auto fill = r.reduced(2.f).withWidth(fillW);
+        juce::ColourGradient gr(c.brighter(0.15f), fill.getX(), fill.getCentreY(),
+                                c.withAlpha(0.5f), fill.getRight(), fill.getCentreY(), false);
+        g.setGradientFill(gr);
+        g.fillRoundedRectangle(fill, 2.f);
+    }
+
     void styleSliderDark(juce::Slider& s, juce::Colour arcFill)
     {
         s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -65,6 +91,21 @@ namespace
         s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
     }
 
+    const juce::Identifier peqLiveDisplayId("peqLiveDisplay");
+
+    float cfMotionDepthForMarker(juce::AudioProcessorValueTreeState& ap, const char* centreParamId) noexcept
+    {
+        if (std::strcmp(centreParamId, "lowCf") == 0)
+            return ap.getRawParameterValue("lfoLoDepthCf")->load();
+        if (std::strcmp(centreParamId, "mid1Cf") == 0)
+            return ap.getRawParameterValue("lfoM1DepthCf")->load();
+        if (std::strcmp(centreParamId, "mid2Cf") == 0)
+            return ap.getRawParameterValue("lfoM2DepthCf")->load();
+        if (std::strcmp(centreParamId, "hiCf") == 0)
+            return ap.getRawParameterValue("lfoHiDepthCf")->load();
+        return 0.f;
+    }
+
     /** Wires EQ band value labels: monospace, no horizontal glyph stretch, padding (see styleEqSlider sizing). */
     struct EqBandLookAndFeel : juce::LookAndFeel_V4
     {
@@ -81,6 +122,58 @@ namespace
                 l->setBorderSize(juce::BorderSize<int>(0, 4, 0, 4));
             }
             return l;
+        }
+
+        void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
+                              float rotaryStartAngle, float rotaryEndAngle, juce::Slider& slider) override
+        {
+            if (!(bool) slider.getProperties()["peqEqBox"]
+                || !slider.getProperties().contains(peqLiveDisplayId))
+            {
+                juce::LookAndFeel_V4::drawRotarySlider(g, x, y, width, height, sliderPos,
+                                                       rotaryStartAngle, rotaryEndAngle, slider);
+                return;
+            }
+
+            const double liveRaw = (double) slider.getProperties()[peqLiveDisplayId];
+            auto outline = slider.findColour(juce::Slider::rotarySliderOutlineColourId);
+            auto fill = slider.findColour(juce::Slider::rotarySliderFillColourId);
+
+            auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(10.0f);
+            const float radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
+            const float lineW = juce::jmin(8.0f, radius * 0.5f);
+            const float arcRadius = radius - lineW * 0.5f;
+
+            juce::Path backgroundArc;
+            backgroundArc.addCentredArc(bounds.getCentreX(), bounds.getCentreY(),
+                                          arcRadius, arcRadius, 0.0f,
+                                          rotaryStartAngle, rotaryEndAngle, true);
+            g.setColour(outline);
+            g.strokePath(backgroundArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            if (slider.isEnabled())
+            {
+                const double mn = slider.getMinimum();
+                const double mx = slider.getMaximum();
+                const double liveClamped = juce::jlimit(mn, mx, liveRaw);
+                const float liveProp = (float) slider.valueToProportionOfLength(liveClamped);
+                const float liveAngle = rotaryStartAngle + liveProp * (rotaryEndAngle - rotaryStartAngle);
+
+                juce::Path valueArc;
+                valueArc.addCentredArc(bounds.getCentreX(), bounds.getCentreY(),
+                                       arcRadius, arcRadius, 0.0f,
+                                       rotaryStartAngle, liveAngle, true);
+                g.setColour(fill);
+                g.strokePath(valueArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+
+            const float restAngle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+            const float thumbW = lineW * 2.0f;
+            const juce::Point<float> thumbPoint(
+                bounds.getCentreX() + arcRadius * std::cos(restAngle - juce::MathConstants<float>::halfPi),
+                bounds.getCentreY() + arcRadius * std::sin(restAngle - juce::MathConstants<float>::halfPi));
+            g.setColour(slider.findColour(juce::Slider::thumbColourId));
+            g.fillEllipse(juce::Rectangle<float>(thumbW, thumbW).withCentre(thumbPoint));
         }
     };
 
@@ -215,24 +308,37 @@ namespace
         return t;
     }
 
-    juce::String buildEqMotionPanelText(juce::AudioProcessorValueTreeState& ap,
-                                        const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
+    juce::String buildEqMotionPanelTooltip(juce::AudioProcessorValueTreeState& ap,
+                                           const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
     {
         if (!motionLfoDepthActive(ap))
-            return "Motion: off (no modulation amounts). Knobs match the filter; green curve matches audio.\n"
-                   "Open Curve + Motion and raise Gain % / Freq % / Width % on a band to add LFO motion.\n"
+            return "Motion is off (all LFO depth knobs at 0%).\n"
+                   "Open Curve + Motion and raise EQ gain / freq / width % on a band to add LFO motion.\n\n"
                    + appendLiveEqSnapshotNumbers(s);
 
         if (!s.motionEngaged)
-            return "Motion: armed (amounts > 0%) — processing must be running for the LFO to sweep the EQ.\n"
-                   "Hi: " + eqMotionTargetsSummary(ap, 0) + "  Mid1: " + eqMotionTargetsSummary(ap, 1) + "\n"
-                   "Mid2: " + eqMotionTargetsSummary(ap, 2) + "  Low: " + eqMotionTargetsSummary(ap, 3) + "\n"
+            return "Motion is armed (depth > 0%) but the host is not running the plugin’s audio graph yet.\n"
+                   "Start playback so processBlock runs; then green arcs = live EQ, blue dot = stored rest value.\n\n"
+                   "Targets — Hi: " + eqMotionTargetsSummary(ap, 0) + "  Mid1: " + eqMotionTargetsSummary(ap, 1) + "\n"
+                   "Mid2: " + eqMotionTargetsSummary(ap, 2) + "  Low: " + eqMotionTargetsSummary(ap, 3) + "\n\n"
                    + appendLiveEqSnapshotNumbers(s);
 
-        return "Motion: on — knobs show live filter settings (L ch). Drag a knob to snap to its stored rest value and change that center.\n"
-               "Hi: " + eqMotionTargetsSummary(ap, 0) + "  Mid1: " + eqMotionTargetsSummary(ap, 1) + "\n"
-               "Mid2: " + eqMotionTargetsSummary(ap, 2) + "  Low: " + eqMotionTargetsSummary(ap, 3) + "\n"
+        return "Motion on (left channel).\n"
+               "Green arc = live filter value; blue dot = stored parameter (drag to edit rest).\n"
+               "Lo / M1 / M2 / Hi tags on the graph follow peak/shelf Hz when freq LFO depth is up.\n\n"
+               "Targets — Hi: " + eqMotionTargetsSummary(ap, 0) + "  Mid1: " + eqMotionTargetsSummary(ap, 1) + "\n"
+               "Mid2: " + eqMotionTargetsSummary(ap, 2) + "  Low: " + eqMotionTargetsSummary(ap, 3) + "\n\n"
                + appendLiveEqSnapshotNumbers(s);
+    }
+
+    juce::String buildEqMotionStatusShort(juce::AudioProcessorValueTreeState& ap,
+                                          const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
+    {
+        if (!motionLfoDepthActive(ap))
+            return "Motion off — use Curve + Motion tab to raise LFO depth % on a band.";
+        if (!s.motionEngaged)
+            return "Motion armed — start playback; green arc = live EQ, blue dot = stored value.";
+        return "Motion on — green arc = live EQ (L), blue dot = stored rest; graph tags track modulated Hz.";
     }
 
     juce::String formatMotionLiveReadout(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
@@ -246,7 +352,9 @@ namespace
         return t;
     }
 
-    /** Fixed dB window (0 dB vertical centre = flat / unity gain). Optional coloured markers at Lo/M1/M2/Hi centre Hz. */
+    /** Fixed dB window (0 dB vertical centre = flat / unity gain). Optional coloured markers at Lo/M1/M2/Hi centre Hz.
+        freqAxisInsetLeftPx / RightPx: horizontal space reserved for ±dB labels. Use 0,0 when stacking under a spectrum
+        that uses the full width for log-Hz (e.g. Curve + Motion tab) so 100 / 1k / 10k grid lines line up. */
     void paintEqMagnitudeCurveInRect(juce::Graphics& g,
                                      juce::Rectangle<int> graphOuter,
                                      const std::vector<double>& freqHz,
@@ -257,8 +365,11 @@ namespace
                                      double fLo,
                                      double fHi,
                                      juce::AudioProcessorValueTreeState* apMarkers,
+                                     const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot* motionSnap,
                                      juce::Colour curveStrokeColour,
-                                     bool drawRoundedBackground)
+                                     bool drawRoundedBackground,
+                                     int freqAxisInsetLeftPx = 54,
+                                     int freqAxisInsetRightPx = 44)
     {
         if (graphOuter.getHeight() < 22 || nPts < 2)
             return;
@@ -266,13 +377,20 @@ namespace
         const double logLo = std::log(fLo);
         const double logHi = std::log(fHi);
 
-        // Left ruler + plot + right scale labels (same numeric range, so max/min are obvious).
-        constexpr int kRulerW = 54;
-        constexpr int kRightScaleW = 44;
         juce::Rectangle<int> band = graphOuter;
-        auto ruler = band.removeFromLeft(kRulerW);
-        auto scaleRight = band.removeFromRight(kRightScaleW);
-        auto curve = band;
+        juce::Rectangle<int> ruler;
+        juce::Rectangle<int> scaleRight;
+        juce::Rectangle<int> curve;
+        if (freqAxisInsetLeftPx > 0 || freqAxisInsetRightPx > 0)
+        {
+            ruler = band.removeFromLeft(freqAxisInsetLeftPx);
+            scaleRight = band.removeFromRight(freqAxisInsetRightPx);
+            curve = band;
+        }
+        else
+        {
+            curve = band;
+        }
 
         if (drawRoundedBackground)
         {
@@ -331,7 +449,19 @@ namespace
                                      { "hiCf", "Hi", juce::Colour(0xff7ecbff) } };
             for (const auto& t : tags)
             {
-                const float hz = apMarkers->getRawParameterValue(t.paramId)->load();
+                float hz = apMarkers->getRawParameterValue(t.paramId)->load();
+                if (motionSnap != nullptr && motionSnap->motionEngaged
+                    && cfMotionDepthForMarker(*apMarkers, t.paramId) > 1.0e-6f)
+                {
+                    if (std::strcmp(t.paramId, "lowCf") == 0)
+                        hz = motionSnap->loCfHz;
+                    else if (std::strcmp(t.paramId, "mid1Cf") == 0)
+                        hz = motionSnap->mid1CfHz;
+                    else if (std::strcmp(t.paramId, "mid2Cf") == 0)
+                        hz = motionSnap->mid2CfHz;
+                    else if (std::strcmp(t.paramId, "hiCf") == 0)
+                        hz = motionSnap->hiCfHz;
+                }
                 if (hz < (float) fLo || hz > (float) fHi)
                     continue;
                 const float x = xOfF(static_cast<double>(hz));
@@ -356,20 +486,25 @@ namespace
         auto yForLabel = [&](float db) -> int
         {
             const int y = juce::roundToInt(yOfDb(db) - 5);
-            return juce::jlimit(ruler.getY() + 1, ruler.getBottom() - 11, y);
+            const int yMin = curve.getY() + 1;
+            const int yMax = curve.getBottom() - 11;
+            return juce::jlimit(yMin, yMax, y);
         };
 
-        g.setFont(8.2f);
-        g.setColour(kTextBright.withAlpha(0.9f));
-        g.drawText(topDbLab, ruler.getX() + 2, yForLabel(dMax), ruler.getWidth() - 4, 11, juce::Justification::right);
-        g.drawText(midDbLab, ruler.getX() + 2, yForLabel(0.f), ruler.getWidth() - 4, 11, juce::Justification::right);
-        g.drawText(botDbLab, ruler.getX() + 2, yForLabel(dMin), ruler.getWidth() - 4, 11, juce::Justification::right);
+        if (ruler.getWidth() > 0 && scaleRight.getWidth() > 0)
+        {
+            g.setFont(8.2f);
+            g.setColour(kTextBright.withAlpha(0.9f));
+            g.drawText(topDbLab, ruler.getX() + 2, yForLabel(dMax), ruler.getWidth() - 4, 11, juce::Justification::right);
+            g.drawText(midDbLab, ruler.getX() + 2, yForLabel(0.f), ruler.getWidth() - 4, 11, juce::Justification::right);
+            g.drawText(botDbLab, ruler.getX() + 2, yForLabel(dMin), ruler.getWidth() - 4, 11, juce::Justification::right);
 
-        g.setFont(8.2f);
-        g.setColour(kTextMuted);
-        g.drawText(topDbLab, scaleRight.getX(), yForLabel(dMax), scaleRight.getWidth() - 2, 11, juce::Justification::left);
-        g.drawText(midDbLab, scaleRight.getX(), yForLabel(0.f), scaleRight.getWidth() - 2, 11, juce::Justification::left);
-        g.drawText(botDbLab, scaleRight.getX(), yForLabel(dMin), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+            g.setFont(8.2f);
+            g.setColour(kTextMuted);
+            g.drawText(topDbLab, scaleRight.getX(), yForLabel(dMax), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+            g.drawText(midDbLab, scaleRight.getX(), yForLabel(0.f), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+            g.drawText(botDbLab, scaleRight.getX(), yForLabel(dMin), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+        }
 
         juce::Path path;
         bool started = false;
@@ -428,8 +563,10 @@ namespace
         }
         proc.getEqChainMagnitudeDb(sr, freqScratch.data(), magScratch.data(), nPts);
 
+        ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot snap;
+        proc.getMotionEffectiveEqSnapshot(snap);
         paintEqMagnitudeCurveInRect(g, plot, freqScratch, magScratch.data(), nPts, dMin, dMax, fLo, fHi,
-                                    &proc.getAPVTS(), kAccentGreen, true);
+                                    &proc.getAPVTS(), &snap, kAccentGreen, true);
     }
 }
 
@@ -507,18 +644,30 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         s->setValue((double) raw, juce::dontSendNotification);
     }
 
-    void applyLiveSnapshotToEqSliders(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
+    void clearEqKnobLiveDisplayProps()
     {
-        hi.cf.setValue((double) s.hiCfHz, juce::dontSendNotification);
-        hi.gain.setValue((double) s.hiGainDb, juce::dontSendNotification);
-        mid1.cf.setValue((double) s.mid1CfHz, juce::dontSendNotification);
-        mid1.bw.setValue((double) s.mid1BwHz, juce::dontSendNotification);
-        mid1.gain.setValue((double) s.mid1GainDb, juce::dontSendNotification);
-        mid2.cf.setValue((double) s.mid2CfHz, juce::dontSendNotification);
-        mid2.bw.setValue((double) s.mid2BwHz, juce::dontSendNotification);
-        mid2.gain.setValue((double) s.mid2GainDb, juce::dontSendNotification);
-        low.cf.setValue((double) s.loCfHz, juce::dontSendNotification);
-        low.gain.setValue((double) s.loGainDb, juce::dontSendNotification);
+        for (auto* s : {&hi.cf, &hi.gain, &mid1.cf, &mid1.bw, &mid1.gain, &mid2.cf, &mid2.bw, &mid2.gain, &low.cf, &low.gain})
+            s->getProperties().remove(peqLiveDisplayId);
+    }
+
+    void setEqKnobLiveDisplayFromSnapshot(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
+    {
+        hi.cf.getProperties().set(peqLiveDisplayId, (double) s.hiCfHz);
+        hi.gain.getProperties().set(peqLiveDisplayId, (double) s.hiGainDb);
+        mid1.cf.getProperties().set(peqLiveDisplayId, (double) s.mid1CfHz);
+        mid1.bw.getProperties().set(peqLiveDisplayId, (double) s.mid1BwHz);
+        mid1.gain.getProperties().set(peqLiveDisplayId, (double) s.mid1GainDb);
+        mid2.cf.getProperties().set(peqLiveDisplayId, (double) s.mid2CfHz);
+        mid2.bw.getProperties().set(peqLiveDisplayId, (double) s.mid2BwHz);
+        mid2.gain.getProperties().set(peqLiveDisplayId, (double) s.mid2GainDb);
+        low.cf.getProperties().set(peqLiveDisplayId, (double) s.loCfHz);
+        low.gain.getProperties().set(peqLiveDisplayId, (double) s.loGainDb);
+    }
+
+    void repaintEqKnobs()
+    {
+        for (auto* s : {&hi.cf, &hi.gain, &mid1.cf, &mid1.bw, &mid1.gain, &mid2.cf, &mid2.bw, &mid2.gain, &low.cf, &low.gain})
+            s->repaint();
     }
 
     void sliderValueChanged(juce::Slider*) override {}
@@ -526,6 +675,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     void sliderDragStarted(juce::Slider* slider) override
     {
         snapEqSliderToStoredParameter(slider);
+        slider->getProperties().remove(peqLiveDisplayId);
+        slider->repaint();
         ++eqSliderGestureDepth;
     }
 
@@ -617,20 +768,21 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         low.cf.setTooltip("Low shelf turnover frequency (Hz). Energy well below this frequency is tilted toward the Gain dB setting; above it the response flattens back toward 0 dB change (classic shelving EQ).");
         low.gain.setTooltip("How much boost or cut applies in the bass region (0 dB = no change). Negative = gentle low cut.");
 
-        motionStatus.setJustificationType(juce::Justification::topLeft);
-        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(9.6f)));
-        motionStatus.setColour(juce::Label::textColourId, kAccentBlue);
-        motionStatus.setMinimumHorizontalScale(1.0f);
+        motionStatus.setJustificationType(juce::Justification::centredLeft);
+        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+        motionStatus.setColour(juce::Label::textColourId, kTextBright);
+        motionStatus.setMinimumHorizontalScale(0.85f);
         ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot snap0;
         processor.getMotionEffectiveEqSnapshot(snap0);
-        motionStatus.setText(buildEqMotionPanelText(ap, snap0), juce::dontSendNotification);
-        motionStatus.setTooltip("Summary of Motion routing and live filter targets. When Motion is running, the EQ knobs track the live filter; drag a knob to snap to its stored rest value and edit that center.");
+        motionStatus.setText(buildEqMotionStatusShort(ap, snap0), juce::dontSendNotification);
+        motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, snap0));
         addAndMakeVisible(motionStatus);
 
         eqGraphTooltip.setTooltip(
             "Low / High bands are shelves (tilt EQ), not pass filters. Shelf Hz is the turnover toward the Gain value.\n\n"
-            "Signal path: Low shelf, Mid1, Mid2, High shelf. Dashed line = 0 dB. Scale is ±30 dB (same as per-band gain); combined bands can clip at the plot edges. Coloured tags = each band’s Hz.\n\n"
-            "Green curve = combined EQ vs flat, including Motion when it is active. EQ knobs show the same live settings while audio runs.");
+            "Signal path: Low shelf, Mid1, Mid2, High shelf. Dashed line = 0 dB. Scale is ±30 dB. "
+            "Coloured tags follow each band’s centre Hz (including Motion on shelf/peak frequency).\n\n"
+            "Green curve = combined EQ. On the knobs, green arc = live value, blue dot = stored rest when Motion is running.");
         addAndMakeVisible(eqGraphTooltip);
 
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "hiCf", hi.cf));
@@ -714,13 +866,17 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         auto& ap = proc.getAPVTS();
         ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot s;
         proc.getMotionEffectiveEqSnapshot(s);
-        motionStatus.setText(buildEqMotionPanelText(ap, s), juce::dontSendNotification);
+        motionStatus.setText(buildEqMotionStatusShort(ap, s), juce::dontSendNotification);
+        motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, s));
 
         const bool followLive = motionLfoDepthActive(ap) && s.motionEngaged && eqSliderGestureDepth == 0
                                 && !eqTextBoxHasKeyboardFocus();
         if (followLive)
-            applyLiveSnapshotToEqSliders(s);
+            setEqKnobLiveDisplayFromSnapshot(s);
+        else
+            clearEqKnobLiveDisplayProps();
 
+        repaintEqKnobs();
         repaint();
     }
 
@@ -748,53 +904,41 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         if (bounds.getWidth() < 160 || bounds.getHeight() < 120)
             return;
 
-        // Reserve the Core strip first so band rows can never overlap it (overlap made the Sat knob look
-        // "random" after switching tabs / resize when vertical space was tight).
-        constexpr int kEqGraphHDefault = 158;
-        constexpr int kMotionBlockH = 78;
+        // Top → bottom: EQ graph, one-line Motion hint, Core (pre-EQ), then Hi / Mid1 / Mid2 / Low rows.
+        // Extra height goes to the graph so there is no dead band between Low shelf and the window bottom.
         constexpr int kGapAfterGraph = 5;
-        constexpr int kGapAfterMotion = 6;
-        constexpr int kFooterH = kSliderColumnH + kGapCaption + kCaptionH + 12;
+        constexpr int kMotionLineH = 28;
+        constexpr int kGapAfterMotion = 4;
+        constexpr int kCoreStripH = kSliderColumnH + kGapCaption + kCaptionH + 10;
+        constexpr int kGapBeforeBands = 6;
         constexpr int kBandRowsH = 4 * kEqRowHeight;
+        constexpr int kMinGraphH = 52;
+        constexpr int kMaxGraphH = 280;
 
-        auto footer = bounds.removeFromBottom(kFooterH);
-        const int availForTop = bounds.getHeight();
-        const int gapMotion = kGapAfterGraph + kGapAfterMotion;
-        int motionH = kMotionBlockH;
-        int graphH = kEqGraphHDefault;
-        // Shrink motion block and/or graph so four band rows never intrude into the Core footer.
-        int spare = availForTop - graphH - gapMotion - motionH - kBandRowsH;
-        if (spare < 0)
-        {
-            motionH = juce::jmax(28, motionH + spare);
-            spare = availForTop - graphH - gapMotion - motionH - kBandRowsH;
-        }
-        if (spare < 0)
-            graphH = juce::jmax(40, graphH + spare);
-        if (graphH + gapMotion + motionH + kBandRowsH > availForTop)
-        {
-            spare = availForTop - graphH - gapMotion - motionH - kBandRowsH;
-            motionH = juce::jmax(28, motionH + spare);
-            spare = availForTop - graphH - gapMotion - motionH - kBandRowsH;
-            if (spare < 0)
-                graphH = juce::jmax(32, graphH + spare);
-        }
+        const int fixedBelowGraph = kGapAfterGraph + kMotionLineH + kGapAfterMotion + kCoreStripH + kGapBeforeBands + kBandRowsH;
+        int graphH = bounds.getHeight() - fixedBelowGraph;
+        graphH = juce::jlimit(kMinGraphH, kMaxGraphH, graphH);
 
         eqGraphBounds = bounds.removeFromTop(graphH);
         bounds.removeFromTop(kGapAfterGraph);
-        motionStatus.setBounds(bounds.removeFromTop(motionH));
+        motionStatus.setBounds(bounds.removeFromTop(kMotionLineH));
         bounds.removeFromTop(kGapAfterMotion);
 
-        const int knobReserve = kKnobSize + 12;
-        int toggleW = 108;
-        if (footer.getWidth() < 108 + knobReserve)
-            toggleW = juce::jlimit(44, 108, footer.getWidth() - knobReserve);
-        auto coreToggleArea = footer.removeFromLeft(toggleW);
-        coreOn.setBounds(coreToggleArea.removeFromTop(26).translated(0, 2));
-        const int cx = footer.getX() + 6;
-        const int cy = footer.getY() + 4;
-        coreSat.setBounds(cx, cy, kKnobSize, kSliderColumnH);
-        coreSatLabel.setBounds(cx, coreSat.getBottom() + kGapCaption, kKnobSize, kCaptionH);
+        {
+            auto coreRow = bounds.removeFromTop(kCoreStripH);
+            const int knobReserve = kKnobSize + 12;
+            int toggleW = 108;
+            if (coreRow.getWidth() < 108 + knobReserve)
+                toggleW = juce::jlimit(44, 108, coreRow.getWidth() - knobReserve);
+            auto coreToggleArea = coreRow.removeFromLeft(toggleW);
+            coreOn.setBounds(coreToggleArea.removeFromTop(26).translated(0, 2));
+            const int cx = coreRow.getX() + 6;
+            const int cy = coreRow.getY() + 4;
+            coreSat.setBounds(cx, cy, kKnobSize, kSliderColumnH);
+            coreSatLabel.setBounds(cx, coreSat.getBottom() + kGapCaption, kKnobSize, kCaptionH);
+        }
+
+        bounds.removeFromTop(kGapBeforeBands);
 
         constexpr int bandStripW = 80;
         constexpr int gapAfterBandStrip = 14;
@@ -1131,7 +1275,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         curvePlotTooltip.setTooltip(
             "FFT spectrum (left channel). White / light fill + trace = before the 4-band EQ (after Core saturation if enabled). Blue = after EQ (before limiter).\n\n"
             "Amber plot = theoretical IIR magnitude (same ±30 dB idea as the EQ tab); it is not part of the FFT before/after comparison.\n\n"
-            "Input / output levels are shown in the bar at the very top of the plugin window (In / Out dBFS RMS).");
+            "Input / output levels: text + horizontal meters at the very top of the plugin (dBFS RMS).");
         addAndMakeVisible(curvePlotTooltip);
     }
 
@@ -1324,8 +1468,10 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
 
             const juce::Colour kIirModelAmber(0xffffc266);
+            ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot curveSnap;
+            proc.getMotionEffectiveEqSnapshot(curveSnap);
             paintEqMagnitudeCurveInRect(g, graph, freqScratch, eqMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
-                                        &proc.getAPVTS(), kIirModelAmber, false);
+                                        &proc.getAPVTS(), &curveSnap, kIirModelAmber, false, 0, 0);
         }
     }
 
@@ -1418,17 +1564,35 @@ ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
 void ParaEQ301AudioProcessorEditor::paint(juce::Graphics& g)
 {
     g.fillAll(kPanelBlack);
+    paintLevelMeterBar(g, meterInBarBounds, meterNormalisedFromRms(proc.getDebugInputRms()), kAccentGreen);
+    paintLevelMeterBar(g, meterOutBarBounds, meterNormalisedFromRms(proc.getDebugOutputRms()), kAccentBlue);
 }
 
 void ParaEQ301AudioProcessorEditor::resized()
 {
-    constexpr int kMeterTop = 4;
-    constexpr int kMeterH = 17;
-    constexpr int kMeterGapBelow = 2;
-    meterInLabel.setBounds(8, kMeterTop, juce::jmax(120, getWidth() / 2 - 12), kMeterH);
-    meterOutLabel.setBounds(getWidth() / 2 + 2, kMeterTop, juce::jmax(120, getWidth() / 2 - 10), kMeterH);
-    tabs.setBounds(0, kMeterTop + kMeterH + kMeterGapBelow, getWidth(),
-                   getHeight() - (kMeterTop + kMeterH + kMeterGapBelow));
+    constexpr int kMeterTop = 5;
+    constexpr int kLineH = 15;
+    constexpr int kBarH = 12;
+    constexpr int kLabelW = 122;
+    constexpr int kPad = 8;
+    constexpr int kGapLabelBar = 5;
+    constexpr int kMeterStripH = kMeterTop + kLineH + kMeterTop + 4;
+
+    const int w = juce::jmax(200, getWidth());
+    const int half = w / 2;
+
+    meterInLabel.setBounds(kPad, kMeterTop, kLabelW, kLineH);
+    const int inBarX = kPad + kLabelW + kGapLabelBar;
+    const int inBarW = juce::jmax(24, half - inBarX - kPad);
+    meterInBarBounds = { inBarX, kMeterTop + 1, inBarW, kBarH };
+
+    const int outColX = half + kPad;
+    meterOutLabel.setBounds(outColX, kMeterTop, kLabelW, kLineH);
+    const int outBarX = outColX + kLabelW + kGapLabelBar;
+    const int outBarW = juce::jmax(24, w - outBarX - kPad);
+    meterOutBarBounds = { outBarX, kMeterTop + 1, outBarW, kBarH };
+
+    tabs.setBounds(0, kMeterStripH, w, getHeight() - kMeterStripH);
 }
 
 void ParaEQ301AudioProcessorEditor::timerCallback()
@@ -1441,4 +1605,5 @@ void ParaEQ301AudioProcessorEditor::timerCallback()
     };
     meterInLabel.setText("In:  " + fmtDb(proc.getDebugInputRms()) + " RMS", juce::dontSendNotification);
     meterOutLabel.setText("Out: " + fmtDb(proc.getDebugOutputRms()) + " RMS", juce::dontSendNotification);
+    repaint();
 }
