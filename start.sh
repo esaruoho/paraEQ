@@ -20,8 +20,8 @@ cd build
 echo "start.sh: configuring (JUCE is fetched on first run, may take a minute)..."
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-echo "start.sh: building..."
-cmake --build . --config Release --parallel "$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
+echo "start.sh: building AU + VST3…"
+cmake --build . --config Release --parallel "$(sysctl -n hw.ncpu 2>/dev/null || echo 8)" --target ParaEQ301_All
 
 echo ""
 echo "start.sh: done."
