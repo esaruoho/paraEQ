@@ -72,6 +72,30 @@ namespace
         s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
     }
 
+    void styleLinearSliderCompact(juce::Slider& s, juce::Colour fillCol)
+    {
+        s.setSliderStyle(juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 18);
+        s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
+        s.setColour(juce::Slider::trackColourId, fillCol.withAlpha(0.85f));
+        s.setColour(juce::Slider::thumbColourId, kAccentBlue);
+        s.setColour(juce::Slider::textBoxTextColourId, kTextBright);
+        s.setColour(juce::Slider::textBoxBackgroundColourId, kTextBoxBg);
+        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
+    }
+
+    void styleCoreSatWideSlider(juce::Slider& s)
+    {
+        s.setSliderStyle(juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+        s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
+        s.setColour(juce::Slider::trackColourId, kAccentGreen.withAlpha(0.9f));
+        s.setColour(juce::Slider::thumbColourId, kAccentBlue);
+        s.setColour(juce::Slider::textBoxTextColourId, kTextBright);
+        s.setColour(juce::Slider::textBoxBackgroundColourId, kTextBoxBg);
+        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
+    }
+
     // EQ value column: wide enough for "18000 Hz" / "-30.0 dB" in monospace without ellipsis or horizontal squish.
     constexpr int kEqSliderColW = 78;
     constexpr int kEqTextBoxW = 74;
@@ -335,10 +359,10 @@ namespace
                                           const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
     {
         if (!motionLfoDepthActive(ap))
-            return "Motion off — use Curve + Motion tab to raise LFO depth % on a band.";
+            return "Motion off - use Curve + Motion tab to raise LFO depth % on a band.";
         if (!s.motionEngaged)
-            return "Motion armed — start playback; green arc = live EQ, blue dot = stored value.";
-        return "Motion on — green arc = live EQ (L), blue dot = stored rest; graph tags track modulated Hz.";
+            return "Motion armed - start playback; green arc = live EQ, blue dot = stored value.";
+        return "Motion on: green arc = live EQ (L), blue dot = stored rest; graph tags track modulated Hz.";
     }
 
     juce::String formatMotionLiveReadout(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
@@ -588,9 +612,12 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     };
 
     BandKnobs hi, mid1, mid2, low;
-    juce::ToggleButton coreOn { "Core color" };
+    juce::ToggleButton core1BypassToggle { "Bypass Saturator 1" };
     juce::Slider coreSat;
     juce::Label coreSatLabel;
+    juce::ToggleButton core2BypassToggle { "Bypass Saturator 2" };
+    juce::Slider core2Sat;
+    juce::Label core2SatLabel;
     juce::Label motionStatus;
 
     ParaEQ301AudioProcessor& proc;
@@ -780,9 +807,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         eqGraphTooltip.setTooltip(
             "Low / High bands are shelves (tilt EQ), not pass filters. Shelf Hz is the turnover toward the Gain value.\n\n"
-            "Signal path: Low shelf, Mid1, Mid2, High shelf. Dashed line = 0 dB. Scale is ±30 dB. "
-            "Coloured tags follow each band’s centre Hz (including Motion on shelf/peak frequency).\n\n"
-            "Green curve = combined EQ. On the knobs, green arc = live value, blue dot = stored rest when Motion is running.");
+            "Signal path: pre-EQ Core saturation, Low shelf, Mid1, Mid2, High shelf, optional post-EQ Core 2. "
+            "Dashed line = 0 dB. Scale is ±30 dB. Coloured tags follow each band’s centre Hz (including Motion).\n\n"
+            "Green curve = combined EQ. Knobs: green arc = live value, blue dot = stored rest when Motion is running.");
         addAndMakeVisible(eqGraphTooltip);
 
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "hiCf", hi.cf));
@@ -796,21 +823,42 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lowCf", low.cf));
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lowGain", low.gain));
 
-        addAndMakeVisible(coreOn);
-        styleToggleDark(coreOn);
-        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "coreOn", coreOn));
+        addAndMakeVisible(core1BypassToggle);
+        styleToggleDark(core1BypassToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "core1Bypass", core1BypassToggle));
+        core1BypassToggle.setTooltip("Checked = pre-EQ saturator fully off (Sat % ignored). Unchecked = apply Sat 1 amount.");
 
-        styleSliderDark(coreSat, kAccentGreen);
+        styleCoreSatWideSlider(coreSat);
         styleLabel(coreSatLabel, "Sat %");
         addAndMakeVisible(coreSat);
         addAndMakeVisible(coreSatLabel);
-        coreSat.setTooltip("Pre-EQ saturation amount (tanh blend). 0% = bypass.");
+        coreSat.setTooltip("Pre-EQ saturation (tanh blend). Crank both stages for heavy core drive.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreSat", coreSat));
         coreSat.textFromValueFunction = [](double v)
         {
             return juce::String(juce::roundToInt(v * 100.0)) + " %";
         };
         coreSat.valueFromTextFunction = [](const juce::String& t)
+        {
+            return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
+        };
+
+        addAndMakeVisible(core2BypassToggle);
+        styleToggleDark(core2BypassToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "core2Bypass", core2BypassToggle));
+        core2BypassToggle.setTooltip("Checked = post-EQ saturator off (Sat % ignored). Unchecked = apply Sat 2 after EQ peaks.");
+
+        styleCoreSatWideSlider(core2Sat);
+        styleLabel(core2SatLabel, "Sat %");
+        addAndMakeVisible(core2Sat);
+        addAndMakeVisible(core2SatLabel);
+        core2Sat.setTooltip("Post-EQ saturation after the EQ (tanh blend). Use with Sat 1 + EQ boosts for aggressive tone.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "core2Sat", core2Sat));
+        core2Sat.textFromValueFunction = [](double v)
+        {
+            return juce::String(juce::roundToInt(v * 100.0)) + " %";
+        };
+        core2Sat.valueFromTextFunction = [](const juce::String& t)
         {
             return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
         };
@@ -909,15 +957,16 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         constexpr int kGapAfterGraph = 5;
         constexpr int kMotionLineH = 28;
         constexpr int kGapAfterMotion = 4;
-        constexpr int kCoreStripH = kSliderColumnH + kGapCaption + kCaptionH + 10;
+        constexpr int kCoreRowH = 36;
+        constexpr int kCoreBetweenRows = 5;
+        constexpr int kCoreStripH = kCoreRowH + kCoreBetweenRows + kCoreRowH;
         constexpr int kGapBeforeBands = 6;
         constexpr int kBandRowsH = 4 * kEqRowHeight;
         constexpr int kMinGraphH = 52;
-        constexpr int kMaxGraphH = 280;
 
         const int fixedBelowGraph = kGapAfterGraph + kMotionLineH + kGapAfterMotion + kCoreStripH + kGapBeforeBands + kBandRowsH;
         int graphH = bounds.getHeight() - fixedBelowGraph;
-        graphH = juce::jlimit(kMinGraphH, kMaxGraphH, graphH);
+        graphH = juce::jmax(kMinGraphH, graphH);
 
         eqGraphBounds = bounds.removeFromTop(graphH);
         bounds.removeFromTop(kGapAfterGraph);
@@ -925,17 +974,25 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         bounds.removeFromTop(kGapAfterMotion);
 
         {
-            auto coreRow = bounds.removeFromTop(kCoreStripH);
-            const int knobReserve = kKnobSize + 12;
-            int toggleW = 108;
-            if (coreRow.getWidth() < 108 + knobReserve)
-                toggleW = juce::jlimit(44, 108, coreRow.getWidth() - knobReserve);
-            auto coreToggleArea = coreRow.removeFromLeft(toggleW);
-            coreOn.setBounds(coreToggleArea.removeFromTop(26).translated(0, 2));
-            const int cx = coreRow.getX() + 6;
-            const int cy = coreRow.getY() + 4;
-            coreSat.setBounds(cx, cy, kKnobSize, kSliderColumnH);
-            coreSatLabel.setBounds(cx, coreSat.getBottom() + kGapCaption, kKnobSize, kCaptionH);
+            auto coreBlock = bounds.removeFromTop(kCoreStripH);
+            auto placeCoreRow = [&](juce::Rectangle<int> coreRow,
+                                    juce::ToggleButton& on, juce::Slider& sat, juce::Label& satLab)
+            {
+                constexpr int kToggleW = 148;
+                auto toggleArea = coreRow.removeFromLeft(juce::jmin(kToggleW, juce::jmax(96, coreRow.getWidth() / 4)));
+                const int cy = toggleArea.getCentreY() - 11;
+                on.setBounds(toggleArea.getX() + 2, cy, toggleArea.getWidth() - 4, 22);
+                auto rest = coreRow.reduced(6, 2);
+                constexpr int kLabelSatW = 42;
+                auto labArea = rest.removeFromRight(kLabelSatW);
+                satLab.setBounds(labArea.getX(), rest.getCentreY() - 7, labArea.getWidth(), 14);
+                sat.setBounds(rest.getX(), rest.getCentreY() - 11, juce::jmax(60, rest.getWidth()), 22);
+            };
+            auto row1 = coreBlock.removeFromTop(kCoreRowH);
+            coreBlock.removeFromTop(kCoreBetweenRows);
+            auto row2 = coreBlock.removeFromTop(kCoreRowH);
+            placeCoreRow(row1, core1BypassToggle, coreSat, coreSatLabel);
+            placeCoreRow(row2, core2BypassToggle, core2Sat, core2SatLabel);
         }
 
         bounds.removeFromTop(kGapBeforeBands);
@@ -1066,7 +1123,7 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
             addAndMakeVisible(r.rate);
             addAndMakeVisible(r.rateL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, rateId, r.rate));
-            r.rate.setTooltip("LFO speed in Hz. On its own it does nothing: turn up EQ gain / EQ freq / EQ width amounts to hear motion.");
+            r.rate.setTooltip("LFO speed in Hz. 0 Hz = frozen phase (no sweep). With depth % up, higher Hz = faster motion.");
 
             sk(r.dGain);
             styleMotionCaption(r.dGainL, "EQ gain");
@@ -1208,60 +1265,22 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
 
 struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component, public juce::SettableTooltipClient
 {
-    juce::ToggleButton limOn { "Limiter on" };
-    juce::Label limThreshL;
-    juce::Slider limThresh;
-    juce::Label limRelL;
-    juce::Slider limRelease;
+    juce::Label note;
 
-    OutTabContent(juce::AudioProcessorValueTreeState& ap,
-                  std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
-                  std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+    OutTabContent()
     {
-        setTooltip("Output limiter catches EQ + saturation peaks (two-stage compression + clip). Hover empty space on this tab for this note.");
-
-        addAndMakeVisible(limOn);
-        styleToggleDark(limOn);
-        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "outLimOn", limOn));
-
-        styleSliderDark(limThresh, kAccentGreen);
-        limThresh.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, kTextBoxH - 2);
-        limThreshL.setText("Ceiling (dB)", juce::dontSendNotification);
-        limThreshL.setJustificationType(juce::Justification::centred);
-        limThreshL.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-        limThreshL.setColour(juce::Label::textColourId, kTextBright);
-        addAndMakeVisible(limThresh);
-        addAndMakeVisible(limThreshL);
-        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "outLimThresh", limThresh));
-        limThresh.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
-
-        styleSliderDark(limRelease, kAccentGreen);
-        limRelease.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, kTextBoxH - 2);
-        limRelL.setText("Release (ms)", juce::dontSendNotification);
-        limRelL.setJustificationType(juce::Justification::centred);
-        limRelL.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-        limRelL.setColour(juce::Label::textColourId, kTextBright);
-        addAndMakeVisible(limRelease);
-        addAndMakeVisible(limRelL);
-        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "outLimRelease", limRelease));
-        limRelease.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " ms"; };
+        setTooltip("Output limiter (two-stage compression + clip). Controls sit on the tab strip next to EQ / Curve + Motion / Output.");
+        styleLabelDark(note,
+                       "Limiter controls are on the tab bar (right): Lim on/off, ceiling (dB), release (ms).",
+                       true);
+        note.setJustificationType(juce::Justification::topLeft);
+        note.setFont(juce::Font(juce::FontOptions().withHeight(11.5f)));
+        addAndMakeVisible(note);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
 
-    void resized() override
-    {
-        auto b = getLocalBounds().reduced(12);
-        limOn.setBounds(b.removeFromTop(26));
-        b.removeFromTop(10);
-        const int knobW = 58;
-        auto row = b.removeFromTop(kSliderColumnH + kGapCaption + kCaptionH);
-        limThresh.setBounds(row.getX(), row.getY(), knobW, kSliderColumnH);
-        limThreshL.setBounds(limThresh.getX() - 4, limThresh.getBottom() + kGapCaption, knobW + 16, kCaptionH);
-        const int x2 = limThresh.getRight() + 20;
-        limRelease.setBounds(x2, row.getY(), knobW, kSliderColumnH);
-        limRelL.setBounds(limRelease.getX() - 6, limRelease.getBottom() + kGapCaption, knobW + 20, kCaptionH);
-    }
+    void resized() override { note.setBounds(getLocalBounds().reduced(14, 14)); }
 };
 
 struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, private juce::Timer
@@ -1273,7 +1292,8 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         specAfter.assign(240, -100.f);
 
         curvePlotTooltip.setTooltip(
-            "FFT spectrum (left channel). White / light fill + trace = before the 4-band EQ (after Core saturation if enabled). Blue = after EQ (before limiter).\n\n"
+            "FFT spectrum (left channel). White / light fill + trace = after pre-EQ Core only (before EQ). "
+            "Blue = after 4-band EQ and optional post-EQ Core 2 (before limiter).\n\n"
             "Amber plot = theoretical IIR magnitude (same ±30 dB idea as the EQ tab); it is not part of the FFT before/after comparison.\n\n"
             "Input / output levels: text + horizontal meters at the very top of the plugin (dBFS RMS).");
         addAndMakeVisible(curvePlotTooltip);
@@ -1502,7 +1522,7 @@ struct ParaEQ301AudioProcessorEditor::CurveMotionTabContent : public juce::Compo
         auto b = getLocalBounds().reduced(4);
         constexpr int kGap = 6;
         // LfoTabContent needs ~530px inner height for Hi+M1+M2+Lo rows + compact chrome; reserve it or rows clip.
-        constexpr int kMotionMinH = 540;
+        constexpr int kMotionMinH = 420;
         const int totalH = b.getHeight();
         int curveH = totalH * 28 / 100;
         curveH = juce::jlimit(140, 260, curveH);
@@ -1524,7 +1544,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     eqPage = std::make_unique<EqTabContent>(proc, ap, attachments, buttonAttachments);
     curveMotionPage = std::make_unique<CurveMotionTabContent>(proc, ap, attachments);
-    outPage = std::make_unique<OutTabContent>(ap, attachments, buttonAttachments);
+    outPage = std::make_unique<OutTabContent>();
 
     tabs.addTab("EQ", kPanelBlack, eqPage.get(), false);
     tabs.addTab("Curve + Motion", kPanelBlack, curveMotionPage.get(), false);
@@ -1537,6 +1557,23 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     tabs.getTabbedButtonBar().setColour(juce::TabbedButtonBar::frontTextColourId, kTextBright);
 
     addAndMakeVisible(tabs);
+
+    styleToggleDark(limOn);
+    limOn.setTooltip("Output limiter on/off.");
+    addAndMakeVisible(limOn);
+    buttonAttachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "outLimOn", limOn));
+
+    styleLinearSliderCompact(limThresh, kAccentGreen);
+    limThresh.setTooltip("Limiter ceiling (dB).");
+    addAndMakeVisible(limThresh);
+    attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "outLimThresh", limThresh));
+    limThresh.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+
+    styleLinearSliderCompact(limRelease, kAccentGreen);
+    limRelease.setTooltip("Limiter release (ms).");
+    addAndMakeVisible(limRelease);
+    attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "outLimRelease", limRelease));
+    limRelease.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " ms"; };
 
     meterInLabel.setJustificationType(juce::Justification::centredLeft);
     meterOutLabel.setJustificationType(juce::Justification::centredLeft);
@@ -1553,7 +1590,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(500, 960);
+    setSize(520, 760);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
@@ -1593,6 +1630,21 @@ void ParaEQ301AudioProcessorEditor::resized()
     meterOutBarBounds = { outBarX, kMeterTop + 1, outBarW, kBarH };
 
     tabs.setBounds(0, kMeterStripH, w, getHeight() - kMeterStripH);
+
+    const int tabDepth = juce::jmax(28, tabs.getTabBarDepth());
+    constexpr int kLimCtrlH = 21;
+    const int limY = kMeterStripH + (tabDepth - kLimCtrlH) / 2;
+    int xR = w - 8;
+    const int sw = juce::jlimit(72, 104, (w - 200) / 2);
+    limRelease.setBounds(xR - sw, limY, sw, kLimCtrlH);
+    xR -= sw + 6;
+    limThresh.setBounds(xR - sw, limY, sw, kLimCtrlH);
+    xR -= sw + 8;
+    limOn.setBounds(xR - 44, limY, 44, kLimCtrlH);
+
+    limOn.toFront(false);
+    limThresh.toFront(false);
+    limRelease.toFront(false);
 }
 
 void ParaEQ301AudioProcessorEditor::timerCallback()

@@ -33,6 +33,10 @@ private:
     juce::Rectangle<int> meterInBarBounds;
     juce::Rectangle<int> meterOutBarBounds;
 
+    juce::ToggleButton limOn { "Lim" };
+    juce::Slider limThresh;
+    juce::Slider limRelease;
+
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
 

@@ -102,6 +102,29 @@ namespace
         return std::pow(10.f, 10.f * (1.f - firstStageRatioInv) / 40.f)
             * juce::Decibels::decibelsToGain(-secondStageThresholdDb);
     }
+
+    /** Presets used coreOn / core2On (true = saturator active). Now core1Bypass / core2Bypass (true = bypass). */
+    void migrateLegacyCoreBypassXml(juce::XmlElement& e)
+    {
+        if (e.hasTagName("PARAM"))
+        {
+            const juce::String id = e.getStringAttribute("id");
+            if (id == "coreOn")
+            {
+                const bool oldEnabled = e.getDoubleAttribute("value") > 0.5;
+                e.setAttribute("id", "core1Bypass");
+                e.setAttribute("value", oldEnabled ? 0.0 : 1.0);
+            }
+            else if (id == "core2On")
+            {
+                const bool oldEnabled = e.getDoubleAttribute("value") > 0.5;
+                e.setAttribute("id", "core2Bypass");
+                e.setAttribute("value", oldEnabled ? 0.0 : 1.0);
+            }
+        }
+        for (auto* c : e.getChildIterator())
+            migrateLegacyCoreBypassXml(*c);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::createParameterLayout()
@@ -168,9 +191,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("coreOn", "Core color", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>("core1Bypass", "Bypass Saturator 1", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "coreSat", "Core sat",
+        "coreSat", "Sat 1 amount",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", true));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "core2Sat", "Sat 2 amount",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
@@ -181,7 +211,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("deg")));
 
-    auto lfoRateRange = juce::NormalisableRange<float>(0.02f, 14.0f, 0.01f, 0.35f);
+    // 0 Hz = LFO phase frozen (no sweep); >0 starts from very slow rates.
+    auto lfoRateRange = juce::NormalisableRange<float>(0.0f, 14.0f, 0.01f, 0.35f);
 
     layout.add(std::make_unique<juce::AudioParameterFloat>("lfoHiRate", "Hi LFO Hz", lfoRateRange, 2.0f, lfoRateHzParameterAttributes()));
     const juce::NormalisableRange<float> lfoDepthRange(0.f, 1.f, 0.01f);
@@ -486,8 +517,10 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     const float inRms = blockRms(buffer, numCh, numSamps);
 
-    const bool coreOn = apvts.getRawParameterValue("coreOn")->load() > 0.5f;
-    const float coreDrive = coreOn ? apvts.getRawParameterValue("coreSat")->load() : 0.f;
+    const bool bypass1 = apvts.getRawParameterValue("core1Bypass")->load() > 0.5f;
+    const float coreDrive = bypass1 ? 0.f : apvts.getRawParameterValue("coreSat")->load();
+    const bool bypass2 = apvts.getRawParameterValue("core2Bypass")->load() > 0.5f;
+    const float core2Drive = bypass2 ? 0.f : apvts.getRawParameterValue("core2Sat")->load();
 
     const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
     const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
@@ -538,6 +571,7 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 x = mid1PeakPerChannel[i].processSample(x);
                 x = mid2PeakPerChannel[i].processSample(x);
                 x = highShelfPerChannel[i].processSample(x);
+                x = applyCoreSaturation(x, core2Drive);
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
@@ -604,6 +638,7 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 x = mid1PeakPerChannel[i].processSample(x);
                 x = mid2PeakPerChannel[i].processSample(x);
                 x = highShelfPerChannel[i].processSample(x);
+                x = applyCoreSaturation(x, core2Drive);
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
@@ -757,7 +792,10 @@ void ParaEQ301AudioProcessor::setStateInformation(const void* data, int sizeInBy
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
     if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
+    {
+        migrateLegacyCoreBypassXml(*xmlState);
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+    }
 }
 
 juce::AudioProcessorEditor* ParaEQ301AudioProcessor::createEditor()
