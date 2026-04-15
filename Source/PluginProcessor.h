@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <cstdint>
 
 class ParaEQ301AudioProcessor : public juce::AudioProcessor
 {
@@ -42,6 +43,28 @@ public:
     /** Combined linear IIR chain magnitude (low shelf → mid peaks → high shelf), channel 0 coeffs. dB = 20·log10|H|. */
     void getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz, float* magnitudesDb, int numPoints) const noexcept;
 
+    /** Per-band LFO phase 0–1 for Motion tab UI (Hi, M1, M2, Lo). Audio thread writes; GUI reads. */
+    void getMotionLfoPhases(float* outFour) const noexcept;
+
+    /** Last-published channel-0 filter targets (Hz / dB) for Motion tab; updated each processBlock. */
+    struct MotionEffectiveEqSnapshot
+    {
+        float hiCfHz = 0, hiGainDb = 0;
+        float mid1CfHz = 0, mid1BwHz = 0, mid1GainDb = 0;
+        float mid2CfHz = 0, mid2BwHz = 0, mid2GainDb = 0;
+        float loCfHz = 0, loGainDb = 0;
+        bool motionEngaged = false;
+    };
+    void getMotionEffectiveEqSnapshot(MotionEffectiveEqSnapshot& s) const noexcept;
+
+    /** Log-spaced Hz → smoothed FFT spectrum dB for Curve tab (pre-EQ vs post-EQ, L ch). Returns false if a concurrent FFT write skipped the copy. */
+    bool getSpectrumBeforeAfterDb(double sampleRate, const double* frequenciesHz, int numPoints,
+                                 float* outBeforeDb, float* outAfterDb) const noexcept;
+
+    static constexpr int kSpectrumFftOrder = 10;
+    static constexpr int kSpectrumFftSize = 1 << kSpectrumFftOrder;
+    static constexpr int kSpectrumBins = kSpectrumFftSize / 2 + 1;
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
@@ -52,6 +75,12 @@ private:
                                  float m1f, float m1bw, float m1GainDb,
                                  float m2f, float m2bw, float m2GainDb,
                                  float hiCf, float hiGainDb) noexcept;
+
+    void publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
+                                   float m1f, float m1bw, float m1GainDb,
+                                   float m2f, float m2bw, float m2GainDb,
+                                   float loCf, float loGainDb,
+                                   bool engaged) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -69,10 +98,32 @@ private:
     double currentSampleRate = 44100.0;
     std::array<float, 4> lfoPhase { { 0.f, 0.f, 0.f, 0.f } };
 
+    std::atomic<float> motionLfoUiPhase[4];
+
+    std::atomic<float> motionUiHiCf, motionUiHiGainDb;
+    std::atomic<float> motionUiM1Cf, motionUiM1Bw, motionUiM1GainDb;
+    std::atomic<float> motionUiM2Cf, motionUiM2Bw, motionUiM2GainDb;
+    std::atomic<float> motionUiLoCf, motionUiLoGainDb;
+    std::atomic<std::uint8_t> motionUiEngaged { 0 };
+
     std::atomic<float> debugInRms { 0.f };
     std::atomic<float> debugOutRms { 0.f };
     float debugSmoothedIn = 0.f;
     float debugSmoothedOut = 0.f;
+
+    juce::dsp::FFT spectrumFft { kSpectrumFftOrder };
+    float spectrumWindow[kSpectrumFftSize] {};
+    float spectrumRingBefore[kSpectrumFftSize] {};
+    float spectrumRingAfter[kSpectrumFftSize] {};
+    int spectrumRingFill = 0;
+    float spectrumFftScratch[2 * kSpectrumFftSize] {};
+    float spectrumPubBefore[kSpectrumBins] {};
+    float spectrumPubAfter[kSpectrumBins] {};
+    float spectrumSmoothBefore[kSpectrumBins] {};
+    float spectrumSmoothAfter[kSpectrumBins] {};
+    mutable std::atomic<std::uint32_t> spectrumSeq { 0 };
+
+    void spectrumPushPrePostEq(float beforeEq, float afterEq) noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessor)
 };

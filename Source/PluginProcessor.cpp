@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <cstring>
 
 namespace
 {
@@ -202,6 +203,17 @@ ParaEQ301AudioProcessor::ParaEQ301AudioProcessor()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", createParameterLayout())
 {
+    for (auto& p : motionLfoUiPhase)
+        p.store(0.f, std::memory_order_relaxed);
+    publishMotionEqUiSnapshot(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false);
+    spectrumSeq.store(0, std::memory_order_relaxed);
+    for (int i = 0; i < kSpectrumBins; ++i)
+    {
+        spectrumPubBefore[i] = -100.f;
+        spectrumPubAfter[i] = -100.f;
+        spectrumSmoothBefore[i] = -100.f;
+        spectrumSmoothAfter[i] = -100.f;
+    }
 }
 
 void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samplesPerBlock)
@@ -234,12 +246,56 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
 
     for (float& p : lfoPhase)
         p = 0.f;
+    for (auto& p : motionLfoUiPhase)
+        p.store(0.f, std::memory_order_relaxed);
+
+    spectrumRingFill = 0;
+    for (int i = 0; i < kSpectrumFftSize; ++i)
+        spectrumWindow[i] = 0.5f - 0.5f * std::cos(kTwoPi * (float) i / (float) juce::jmax(1, kSpectrumFftSize - 1));
+    for (int i = 0; i < kSpectrumBins; ++i)
+    {
+        spectrumSmoothBefore[i] = -100.f;
+        spectrumSmoothAfter[i] = -100.f;
+        spectrumPubBefore[i] = -100.f;
+        spectrumPubAfter[i] = -100.f;
+    }
+    spectrumSeq.store(0, std::memory_order_relaxed);
 
     debugSmoothedIn = debugSmoothedOut = 0.f;
     debugInRms.store(0.f, std::memory_order_relaxed);
     debugOutRms.store(0.f, std::memory_order_relaxed);
 
     updateFiltersUniform(currentSampleRate);
+    publishMotionEqUiSnapshot(apvts.getRawParameterValue("hiCf")->load(),
+                              apvts.getRawParameterValue("hiGain")->load(),
+                              apvts.getRawParameterValue("mid1Cf")->load(),
+                              apvts.getRawParameterValue("mid1Bw")->load(),
+                              apvts.getRawParameterValue("mid1Gain")->load(),
+                              apvts.getRawParameterValue("mid2Cf")->load(),
+                              apvts.getRawParameterValue("mid2Bw")->load(),
+                              apvts.getRawParameterValue("mid2Gain")->load(),
+                              apvts.getRawParameterValue("lowCf")->load(),
+                              apvts.getRawParameterValue("lowGain")->load(),
+                              false);
+}
+
+void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
+                                                         float m1f, float m1bw, float m1GainDb,
+                                                         float m2f, float m2bw, float m2GainDb,
+                                                         float loCf, float loGainDb,
+                                                         bool engaged) noexcept
+{
+    motionUiHiCf.store(hiCf, std::memory_order_relaxed);
+    motionUiHiGainDb.store(hiGainDb, std::memory_order_relaxed);
+    motionUiM1Cf.store(m1f, std::memory_order_relaxed);
+    motionUiM1Bw.store(m1bw, std::memory_order_relaxed);
+    motionUiM1GainDb.store(m1GainDb, std::memory_order_relaxed);
+    motionUiM2Cf.store(m2f, std::memory_order_relaxed);
+    motionUiM2Bw.store(m2bw, std::memory_order_relaxed);
+    motionUiM2GainDb.store(m2GainDb, std::memory_order_relaxed);
+    motionUiLoCf.store(loCf, std::memory_order_relaxed);
+    motionUiLoGainDb.store(loGainDb, std::memory_order_relaxed);
+    motionUiEngaged.store(engaged ? (std::uint8_t) 1 : (std::uint8_t) 0, std::memory_order_relaxed);
 }
 
 void ParaEQ301AudioProcessor::getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz,
@@ -391,6 +447,7 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             {
                 float x = data[n];
                 x = applyCoreSaturation(x, coreDrive);
+                const float beforeEq = x;
                 const size_t i = static_cast<size_t>(ch);
                 x = lowShelfPerChannel[i].processSample(x);
                 x = mid1PeakPerChannel[i].processSample(x);
@@ -399,8 +456,12 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
+                if (ch == 0)
+                    spectrumPushPrePostEq(beforeEq, x);
             }
         }
+        publishMotionEqUiSnapshot(baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
+                                  baseM2f, baseM2bw, baseM2g, baseLoCf, baseLoG, false);
     }
     else
     {
@@ -438,11 +499,14 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     const float loGain = modGainDb(baseLoG, sLo, dLoG);
 
                     updateFiltersForChannel(ch, sr, loCf, loGain, m1f, m1bw, m1g, m2f, m2bw, m2g, hiCf, hiGain);
+                    if (ch == 0)
+                        publishMotionEqUiSnapshot(hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
                 }
 
                 float* data = buffer.getWritePointer(ch);
                 float x = data[n];
                 x = applyCoreSaturation(x, coreDrive);
+                const float beforeEq = x;
                 const size_t i = static_cast<size_t>(ch);
                 x = lowShelfPerChannel[i].processSample(x);
                 x = mid1PeakPerChannel[i].processSample(x);
@@ -451,6 +515,8 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
+                if (ch == 0)
+                    spectrumPushPrePostEq(beforeEq, x);
             }
         }
     }
@@ -484,6 +550,106 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     const float outRms = blockRms(buffer, numCh, numSamps);
     pushDebugMeters(inRms, outRms);
+
+    for (int i = 0; i < 4; ++i)
+        motionLfoUiPhase[(size_t) i].store(lfoPhase[(size_t) i], std::memory_order_relaxed);
+}
+
+void ParaEQ301AudioProcessor::getMotionLfoPhases(float* outFour) const noexcept
+{
+    for (int i = 0; i < 4; ++i)
+        outFour[(size_t) i] = motionLfoUiPhase[(size_t) i].load(std::memory_order_relaxed);
+}
+
+void ParaEQ301AudioProcessor::getMotionEffectiveEqSnapshot(MotionEffectiveEqSnapshot& s) const noexcept
+{
+    s.hiCfHz = motionUiHiCf.load(std::memory_order_relaxed);
+    s.hiGainDb = motionUiHiGainDb.load(std::memory_order_relaxed);
+    s.mid1CfHz = motionUiM1Cf.load(std::memory_order_relaxed);
+    s.mid1BwHz = motionUiM1Bw.load(std::memory_order_relaxed);
+    s.mid1GainDb = motionUiM1GainDb.load(std::memory_order_relaxed);
+    s.mid2CfHz = motionUiM2Cf.load(std::memory_order_relaxed);
+    s.mid2BwHz = motionUiM2Bw.load(std::memory_order_relaxed);
+    s.mid2GainDb = motionUiM2GainDb.load(std::memory_order_relaxed);
+    s.loCfHz = motionUiLoCf.load(std::memory_order_relaxed);
+    s.loGainDb = motionUiLoGainDb.load(std::memory_order_relaxed);
+    s.motionEngaged = motionUiEngaged.load(std::memory_order_relaxed) != 0;
+}
+
+void ParaEQ301AudioProcessor::spectrumPushPrePostEq(float beforeEq, float afterEq) noexcept
+{
+    if (spectrumRingFill < kSpectrumFftSize)
+    {
+        spectrumRingBefore[spectrumRingFill] = beforeEq;
+        spectrumRingAfter[spectrumRingFill] = afterEq;
+        ++spectrumRingFill;
+        if (spectrumRingFill < kSpectrumFftSize)
+            return;
+    }
+
+    const auto runOne = [this](const float* ring, float* smoothState, float* publish)
+    {
+        for (int i = 0; i < kSpectrumFftSize; ++i)
+            spectrumFftScratch[i] = ring[i] * spectrumWindow[i];
+        std::memset(spectrumFftScratch + kSpectrumFftSize, 0, sizeof(float) * (size_t) kSpectrumFftSize);
+        spectrumFft.performFrequencyOnlyForwardTransform(spectrumFftScratch, true);
+        for (int i = 0; i < kSpectrumBins; ++i)
+        {
+            const float m = spectrumFftScratch[i];
+            const float db = 20.f * std::log10(juce::jmax(m, 1.0e-14f));
+            smoothState[i] = 0.9f * smoothState[i] + 0.1f * db;
+            publish[i] = smoothState[i];
+        }
+    };
+
+    spectrumSeq.fetch_add(1, std::memory_order_acq_rel);
+    runOne(spectrumRingBefore, spectrumSmoothBefore, spectrumPubBefore);
+    runOne(spectrumRingAfter, spectrumSmoothAfter, spectrumPubAfter);
+    spectrumSeq.fetch_add(1, std::memory_order_release);
+
+    spectrumRingFill = 0;
+}
+
+bool ParaEQ301AudioProcessor::getSpectrumBeforeAfterDb(double sampleRate, const double* frequenciesHz, int numPoints,
+                                                        float* outBeforeDb, float* outAfterDb) const noexcept
+{
+    const uint32_t a = spectrumSeq.load(std::memory_order_acquire);
+    if ((a & 1u) != 0)
+        return false;
+
+    float lb[kSpectrumBins];
+    float la[kSpectrumBins];
+    std::memcpy(lb, spectrumPubBefore, sizeof(lb));
+    std::memcpy(la, spectrumPubAfter, sizeof(la));
+
+    const uint32_t b = spectrumSeq.load(std::memory_order_acquire);
+    if (a != b)
+        return false;
+
+    const double srUse = sampleRate > 0.0 ? sampleRate : currentSampleRate;
+    const double nyq = srUse * 0.499;
+    const double binHz = srUse / (double) kSpectrumFftSize;
+
+    for (int i = 0; i < numPoints; ++i)
+    {
+        double f = juce::jlimit(1.0, nyq, frequenciesHz[i]);
+        const float binF = (float) (f / binHz);
+        int i0 = (int) std::floor((double) binF);
+        const float frac = binF - (float) i0;
+        if (i0 < 0)
+            i0 = 0;
+        if (i0 >= kSpectrumBins - 1)
+        {
+            outBeforeDb[i] = lb[kSpectrumBins - 1];
+            outAfterDb[i] = la[kSpectrumBins - 1];
+        }
+        else
+        {
+            outBeforeDb[i] = (1.f - frac) * lb[i0] + frac * lb[i0 + 1];
+            outAfterDb[i] = (1.f - frac) * la[i0] + frac * la[i0 + 1];
+        }
+    }
+    return true;
 }
 
 void ParaEQ301AudioProcessor::getStateInformation(juce::MemoryBlock& destData)

@@ -17,13 +17,13 @@ private:
     struct EqTabContent;
     struct CurveTabContent;
     struct LfoTabContent;
+    struct CurveMotionTabContent;
     struct OutTabContent;
 
     ParaEQ301AudioProcessor& proc;
 
     std::unique_ptr<EqTabContent> eqPage;
-    std::unique_ptr<CurveTabContent> curvePage;
-    std::unique_ptr<LfoTabContent> lfoPage;
+    std::unique_ptr<CurveMotionTabContent> curveMotionPage;
     std::unique_ptr<OutTabContent> outPage;
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };

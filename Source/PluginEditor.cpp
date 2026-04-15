@@ -11,11 +11,6 @@ namespace
     constexpr int kCaptionH = 15;
     constexpr int kGapCaption = 4;
     constexpr int kRowHeight = kSliderColumnH + kGapCaption + kCaptionH;
-    constexpr int kLabelWidth = 40;
-    constexpr int kColCfLeft = kLabelWidth + 4;
-    constexpr int kColCfCenter = kColCfLeft + kKnobSize + 6;
-    constexpr int kColBw = kColCfCenter + kKnobSize + 6;
-    constexpr int kColGain = kColBw + kKnobSize + 6;
 
     const juce::Colour kPanelBlack(0xff0a0a0a);
     const juce::Colour kTextBright(0xfff0f0f0);
@@ -35,6 +30,44 @@ namespace
         s.setColour(juce::Slider::textBoxBackgroundColourId, kTextBoxBg);
         s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
     }
+
+    // EQ value column: wide enough for "18000 Hz" / "-30.0 dB" in monospace without ellipsis or horizontal squish.
+    constexpr int kEqSliderColW = 72;
+    constexpr int kEqTextBoxW = 68;
+    constexpr int kEqTextBoxH = 20;
+    constexpr int kEqSliderColumnH = kKnobSize + kEqTextBoxH;
+    constexpr int kEqRowHeight = kEqSliderColumnH + kGapCaption + kCaptionH;
+
+    void styleEqSlider(juce::Slider& s, juce::Colour arcFill)
+    {
+        s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, kEqTextBoxW, kEqTextBoxH - 1);
+        s.setColour(juce::Slider::rotarySliderFillColourId, arcFill);
+        s.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff444444));
+        s.setColour(juce::Slider::thumbColourId, kAccentBlue);
+        s.setColour(juce::Slider::textBoxTextColourId, kTextBright);
+        s.setColour(juce::Slider::textBoxBackgroundColourId, kTextBoxBg);
+        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
+    }
+
+    /** Wires EQ band value labels: monospace, no horizontal glyph stretch, padding (see styleEqSlider sizing). */
+    struct EqBandLookAndFeel : juce::LookAndFeel_V4
+    {
+        juce::Label* createSliderTextBox (juce::Slider& slider) override
+        {
+            auto* l = juce::LookAndFeel_V4::createSliderTextBox (slider);
+            if ((bool) slider.getProperties()["peqEqBox"])
+            {
+                l->setFont(juce::Font(juce::FontOptions()
+                                          .withName(juce::Font::getDefaultMonospacedFontName())
+                                          .withHeight(11.0f)));
+                l->setMinimumHorizontalScale(1.0f);
+                l->setJustificationType(juce::Justification::centred);
+                l->setBorderSize(juce::BorderSize<int>(0, 4, 0, 4));
+            }
+            return l;
+        }
+    };
 
     void styleLabelDark(juce::Label& l, const juce::String& text, bool bright = true)
     {
@@ -58,9 +91,264 @@ namespace
         l.setFont(juce::Font(juce::FontOptions().withHeight(9.5f)));
         l.setColour(juce::Label::textColourId, kTextBright);
     }
+
+    void paintMotionLfoDot(juce::Graphics& g, juce::Rectangle<int> area, float phase01, float brightness01, juce::Colour accent)
+    {
+        const float cx = (float) area.getCentreX();
+        const float cy = (float) area.getCentreY();
+        const float r = juce::jmin((float) area.getWidth(), (float) area.getHeight()) * 0.5f - 1.f;
+        g.setColour(kTextMuted.withAlpha(0.28f + 0.4f * brightness01));
+        g.drawEllipse(cx - r, cy - r, r * 2.f, r * 2.f, 1.f);
+        const float a = phase01 * juce::MathConstants<float>::twoPi - juce::MathConstants<float>::halfPi;
+        const float dotR = 2.8f;
+        const float rr = juce::jmax(0.f, r - dotR);
+        g.setColour(accent.withAlpha(0.35f + 0.65f * brightness01));
+        g.fillEllipse(cx + std::cos(a) * rr - dotR, cy + std::sin(a) * rr - dotR, dotR * 2.f, dotR * 2.f);
+    }
+
+    bool motionLfoDepthActive(juce::AudioProcessorValueTreeState& ap) noexcept
+    {
+        return (ap.getRawParameterValue("lfoHiDepthGain")->load()
+                + ap.getRawParameterValue("lfoHiDepthCf")->load()
+                + ap.getRawParameterValue("lfoM1DepthGain")->load()
+                + ap.getRawParameterValue("lfoM1DepthCf")->load()
+                + ap.getRawParameterValue("lfoM1DepthBw")->load()
+                + ap.getRawParameterValue("lfoM2DepthGain")->load()
+                + ap.getRawParameterValue("lfoM2DepthCf")->load()
+                + ap.getRawParameterValue("lfoM2DepthBw")->load()
+                + ap.getRawParameterValue("lfoLoDepthGain")->load()
+                + ap.getRawParameterValue("lfoLoDepthCf")->load())
+               > 1.0e-5f;
+    }
+
+    bool eqBandHasMotion(juce::AudioProcessorValueTreeState& ap, int bandIndex) noexcept
+    {
+        switch (bandIndex)
+        {
+            case 0:
+                return (ap.getRawParameterValue("lfoHiDepthGain")->load()
+                        + ap.getRawParameterValue("lfoHiDepthCf")->load())
+                       > 1.0e-5f;
+            case 1:
+                return (ap.getRawParameterValue("lfoM1DepthGain")->load()
+                        + ap.getRawParameterValue("lfoM1DepthCf")->load()
+                        + ap.getRawParameterValue("lfoM1DepthBw")->load())
+                       > 1.0e-5f;
+            case 2:
+                return (ap.getRawParameterValue("lfoM2DepthGain")->load()
+                        + ap.getRawParameterValue("lfoM2DepthCf")->load()
+                        + ap.getRawParameterValue("lfoM2DepthBw")->load())
+                       > 1.0e-5f;
+            case 3:
+                return (ap.getRawParameterValue("lfoLoDepthGain")->load()
+                        + ap.getRawParameterValue("lfoLoDepthCf")->load())
+                       > 1.0e-5f;
+            default:
+                return false;
+        }
+    }
+
+    juce::String eqMotionTargetsSummary(juce::AudioProcessorValueTreeState& ap, int bandIndex)
+    {
+        auto on = [](float v) { return v > 1.0e-5f; };
+        juce::String s;
+        switch (bandIndex)
+        {
+            case 0:
+                if (on(ap.getRawParameterValue("lfoHiDepthGain")->load()))
+                    s << "Gain dB ";
+                if (on(ap.getRawParameterValue("lfoHiDepthCf")->load()))
+                    s << "Shelf Hz ";
+                break;
+            case 1:
+                if (on(ap.getRawParameterValue("lfoM1DepthGain")->load()))
+                    s << "Gain dB ";
+                if (on(ap.getRawParameterValue("lfoM1DepthCf")->load()))
+                    s << "Peak Hz ";
+                if (on(ap.getRawParameterValue("lfoM1DepthBw")->load()))
+                    s << "Width Hz ";
+                break;
+            case 2:
+                if (on(ap.getRawParameterValue("lfoM2DepthGain")->load()))
+                    s << "Gain dB ";
+                if (on(ap.getRawParameterValue("lfoM2DepthCf")->load()))
+                    s << "Peak Hz ";
+                if (on(ap.getRawParameterValue("lfoM2DepthBw")->load()))
+                    s << "Width Hz ";
+                break;
+            case 3:
+                if (on(ap.getRawParameterValue("lfoLoDepthGain")->load()))
+                    s << "Gain dB ";
+                if (on(ap.getRawParameterValue("lfoLoDepthCf")->load()))
+                    s << "Shelf Hz ";
+                break;
+            default:
+                break;
+        }
+        s = s.trimEnd();
+        return s.isEmpty() ? juce::String("(nothing — all 0%)") : s;
+    }
+
+    juce::String buildEqMotionStatusLine(juce::AudioProcessorValueTreeState& ap)
+    {
+        if (!motionLfoDepthActive(ap))
+            return "Motion (LFO): idle — the EQ tab is static. Open Curve + Motion and raise any EQ gain / EQ freq / EQ width % to animate filters (sliders stay as center points).";
+
+        return "Motion is changing filters (not these knobs):  Hi → "
+               + eqMotionTargetsSummary(ap, 0) + "   Mid1 → "
+               + eqMotionTargetsSummary(ap, 1) + "   Mid2 → "
+               + eqMotionTargetsSummary(ap, 2) + "   Low → "
+               + eqMotionTargetsSummary(ap, 3)
+               + "   |   Watch the green curve above — it is the live EQ.";
+    }
+
+    juce::String formatMotionLiveReadout(const ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot& s)
+    {
+        auto ri = [](float x) { return juce::String(juce::roundToInt(x)); };
+        juce::String t;
+        if (!s.motionEngaged)
+            t = "Filters now (L channel) match the EQ tab. Set any amount below > 0% to hear LFO motion.\n";
+        else
+            t = "Filters now (L channel) — these numbers sweep with the LFO. EQ tab = rest point only (sliders do not move).\n";
+        t += "Hi  " + ri(s.hiCfHz) + " Hz  " + juce::String(s.hiGainDb, 1) + " dB     ";
+        t += "M1  " + ri(s.mid1CfHz) + " Hz  " + ri(s.mid1BwHz) + " Hz BW  " + juce::String(s.mid1GainDb, 1) + " dB\n";
+        t += "M2  " + ri(s.mid2CfHz) + " Hz  " + ri(s.mid2BwHz) + " Hz BW  " + juce::String(s.mid2GainDb, 1) + " dB     ";
+        t += "Lo  " + ri(s.loCfHz) + " Hz  " + juce::String(s.loGainDb, 1) + " dB";
+        return t;
+    }
+
+    /** Draws combined low shelf + 2 peaks + high shelf magnitude; emphasises 0 dB baseline. */
+    void paintEqChainResponse(juce::Graphics& g, juce::Rectangle<int> fullArea,
+                              ParaEQ301AudioProcessor& proc,
+                              std::vector<double>& freqScratch, std::vector<float>& magScratch,
+                              float dMin, float dMax, bool motionLfoActive, bool showShelfTopologyHint)
+    {
+        if (fullArea.getHeight() < 36)
+            return;
+
+        const int shelfHintH = showShelfTopologyHint ? 13 : 0;
+        const int motionBlockH = motionLfoActive ? 28 : 14;
+        auto header = fullArea.removeFromTop(shelfHintH + motionBlockH);
+
+        if (showShelfTopologyHint)
+        {
+            g.setFont(9.2f);
+            g.setColour(kAccentBlue.withAlpha(0.9f));
+            g.drawText("Lo / Hi = low shelf & high shelf (tilt EQ). Shelf Hz = turnover where the curve aims at Gain — not a low-pass or high-pass (nothing is fully muted).",
+                       header.removeFromTop(shelfHintH), juce::Justification::centredLeft, true);
+        }
+
+        g.setColour(kTextBright);
+        if (motionLfoActive)
+        {
+            g.setFont(9.8f);
+            g.setColour(kAccentGreen.withAlpha(0.95f));
+            g.drawText("Curve = live EQ magnitude (left channel), including Motion — it should move while audio runs.",
+                       header.removeFromTop(14), juce::Justification::centredLeft, true);
+            g.setColour(kTextMuted);
+            g.drawText("EQ tab knobs stay put; they are the targets the LFO moves around.",
+                       header, juce::Justification::centredLeft, true);
+        }
+        else
+        {
+            g.setFont(10.5f);
+            g.drawText("Signal path: Low shelf → Mid1 peak → Mid2 peak → High shelf (same as audio). Dashed = 0 dB flat.",
+                       header, juce::Justification::centredLeft, true);
+        }
+        g.setColour(kTextBright);
+
+        auto plot = fullArea.reduced(0, 2);
+        plot.removeFromBottom(11);
+
+        const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 44100.0;
+        constexpr int nPts = 220;
+        if ((int) freqScratch.size() != nPts)
+        {
+            freqScratch.resize((size_t) nPts);
+            magScratch.resize((size_t) nPts);
+        }
+        const double fLo = 30.0;
+        const double fHi = juce::jmin(20000.0, sr * 0.48);
+        const double logLo = std::log(fLo);
+        const double logHi = std::log(fHi);
+        for (int i = 0; i < nPts; ++i)
+        {
+            const double t = (double) i / (double) (nPts - 1);
+            freqScratch[(size_t) i] = std::exp(logLo + t * (logHi - logLo));
+        }
+        proc.getEqChainMagnitudeDb(sr, freqScratch.data(), magScratch.data(), nPts);
+
+        juce::Rectangle<int> graph = plot;
+        g.setColour(juce::Colour(0xff1a1a1a));
+        g.fillRoundedRectangle(graph.toFloat(), 3.f);
+        g.setColour(juce::Colour(0xff333333));
+        g.drawRoundedRectangle(graph.toFloat(), 3.f, 1.f);
+
+        auto xOfF = [&](double f) -> float
+        {
+            f = juce::jlimit(fLo, fHi, f);
+            const double lf = std::log(f);
+            return (float) (graph.getX() + (lf - logLo) / (logHi - logLo) * (double) graph.getWidth());
+        };
+
+        auto yOfDb = [&](float db) -> float
+        {
+            const float n = juce::jlimit(dMin, dMax, db);
+            const float norm = (n - dMin) / (dMax - dMin);
+            return (float) graph.getBottom() - norm * (float) graph.getHeight();
+        };
+
+        for (float db : { -18.f, -12.f, -6.f, 6.f, 12.f, 18.f })
+        {
+            if (db <= dMin || db >= dMax || db == 0.f)
+                continue;
+            const float y = yOfDb(db);
+            g.setColour(juce::Colour(0xff2a2a2a));
+            g.drawHorizontalLine(juce::roundToInt(y), (float) graph.getX(), (float) graph.getRight());
+        }
+
+        g.setColour(kTextMuted);
+        g.setFont(8.5f);
+        for (double hz : { 100.0, 1000.0, 10000.0 })
+        {
+            if (hz < fLo || hz > fHi)
+                continue;
+            const float x = xOfF(hz);
+            g.drawVerticalLine(juce::roundToInt(x), (float) graph.getY(), (float) graph.getBottom());
+            const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
+            g.drawText(lab, juce::roundToInt(x) - 11, graph.getBottom() + 1, 22, 9, juce::Justification::centred);
+        }
+
+        const float y0 = yOfDb(0.f);
+        g.setColour(juce::Colour(0xff666666));
+        for (float x = (float) graph.getX(); x < (float) graph.getRight(); x += 10.f)
+            g.drawLine(x, y0, juce::jmin(x + 5.5f, (float) graph.getRight()), y0, 1.1f);
+        g.setColour(kTextMuted);
+        g.setFont(8.5f);
+        g.drawText("0 dB", graph.getRight() - 36, juce::roundToInt(y0) - 11, 34, 10, juce::Justification::right);
+
+        juce::Path path;
+        bool started = false;
+        for (int i = 0; i < nPts; ++i)
+        {
+            const float x = xOfF(freqScratch[(size_t) i]);
+            const float y = yOfDb(magScratch[(size_t) i]);
+            if (!started)
+            {
+                path.startNewSubPath(x, y);
+                started = true;
+            }
+            else
+            {
+                path.lineTo(x, y);
+            }
+        }
+        g.setColour(kAccentGreen.withAlpha(0.95f));
+        g.strokePath(path, juce::PathStrokeType(2.2f));
+    }
 }
 
-struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
+struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component, private juce::Timer
 {
     struct BandKnobs
     {
@@ -79,14 +367,32 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
     juce::ToggleButton coreOn { "Core color" };
     juce::Slider coreSat;
     juce::Label coreSatLabel;
+    juce::Label motionStatus;
 
-    static void styleKnob(juce::Slider& s) { styleSliderDark(s, kAccentGreen); }
+    ParaEQ301AudioProcessor& proc;
+    juce::Rectangle<int> eqGraphBounds;
+    juce::Rectangle<int> motionRowRect[4];
+    std::vector<double> freqScratch;
+    std::vector<float> magScratch;
+
+    EqBandLookAndFeel eqBandLookAndFeel;
+
+    static void styleEqBandKnob(juce::Slider& s) { styleEqSlider(s, kAccentGreen); }
+
+    static void wireEqBandSlider(juce::Slider& s, EqBandLookAndFeel& lf)
+    {
+        s.getProperties().set("peqEqBox", true);
+        s.setLookAndFeel(&lf);
+        styleEqBandKnob(s);
+    }
 
     static void styleLabel(juce::Label& l, const juce::String& text) { styleLabelDark(l, text, true); }
 
-    EqTabContent(juce::AudioProcessorValueTreeState& ap,
+    EqTabContent(ParaEQ301AudioProcessor& processor,
+                 juce::AudioProcessorValueTreeState& ap,
                  std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
                  std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+        : proc(processor)
     {
         hi.hasBw = false;
         hi.hasCfInLeftColumn = false;
@@ -97,42 +403,45 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
         low.hasBw = false;
         low.hasCfInLeftColumn = false;
 
-        hi.bandLabel.setText("Hi:", juce::dontSendNotification);
-        mid1.bandLabel.setText("Mid1:", juce::dontSendNotification);
-        mid2.bandLabel.setText("Mid2:", juce::dontSendNotification);
-        low.bandLabel.setText("Low:", juce::dontSendNotification);
+        hi.bandLabel.setText("Hi\nhigh shelf", juce::dontSendNotification);
+        mid1.bandLabel.setText("Mid1\npeaking", juce::dontSendNotification);
+        mid2.bandLabel.setText("Mid2\npeaking", juce::dontSendNotification);
+        low.bandLabel.setText("Low\nlow shelf", juce::dontSendNotification);
 
         for (auto* band : {&hi, &mid1, &mid2, &low})
         {
             addAndMakeVisible(band->bandLabel);
             band->bandLabel.setJustificationType(juce::Justification::centredRight);
-            band->bandLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            band->bandLabel.setFont(juce::Font(juce::FontOptions(10.2f, juce::Font::bold)));
             band->bandLabel.setColour(juce::Label::textColourId, kTextBright);
+            band->bandLabel.setPaintingIsUnclipped(false);
 
-            styleKnob(band->cf);
+            wireEqBandSlider(band->cf, eqBandLookAndFeel);
             addAndMakeVisible(band->cf);
             addAndMakeVisible(band->cfLabel);
 
             if (band->hasBw)
             {
-                styleKnob(band->bw);
+                wireEqBandSlider(band->bw, eqBandLookAndFeel);
                 addAndMakeVisible(band->bw);
                 addAndMakeVisible(band->bwLabel);
             }
 
-            styleKnob(band->gain);
+            wireEqBandSlider(band->gain, eqBandLookAndFeel);
             addAndMakeVisible(band->gain);
             addAndMakeVisible(band->gainLabel);
         }
 
         styleLabel(hi.cfLabel, "Shelf Hz");
-        hi.cf.setTooltip("High shelf corner frequency. Frequencies above this are boosted or cut by the gain control.");
+        hi.bandLabel.setTooltip("High shelf: boosts or cuts treble. It is not a high-pass filter — low frequencies still pass. \"Shelf Hz\" is the turnover: far above it the curve reaches the Gain value.");
+        hi.cf.setTooltip("High shelf turnover frequency (Hz). Energy well above this frequency is tilted toward the Gain dB setting; below it the response flattens back toward 0 dB change (classic shelving EQ).");
         styleLabel(hi.gainLabel, "Gain dB");
-        hi.gain.setTooltip("High shelf gain in decibels (0 = flat).");
+        hi.gain.setTooltip("How much boost or cut applies in the treble region (0 dB = no change). Negative = gentle high cut.");
 
         styleLabel(mid1.cfLabel, "Peak Hz");
         styleLabel(mid1.bwLabel, "Width Hz");
         styleLabel(mid1.gainLabel, "Gain dB");
+        mid1.bandLabel.setTooltip("Peaking (parametric) band: bell-shaped boost or cut centred at Peak Hz.");
         mid1.cf.setTooltip("Centre frequency of the first mid peaking EQ.");
         mid1.bw.setTooltip("Bandwidth of the peak in Hz (smaller = narrower notch/boost).");
         mid1.gain.setTooltip("Gain at the peak centre in dB.");
@@ -140,14 +449,25 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
         styleLabel(mid2.cfLabel, "Peak Hz");
         styleLabel(mid2.bwLabel, "Width Hz");
         styleLabel(mid2.gainLabel, "Gain dB");
+        mid2.bandLabel.setTooltip("Second peaking band: same idea as Mid1, different frequency and width.");
         mid2.cf.setTooltip("Centre frequency of the second mid peaking EQ.");
         mid2.bw.setTooltip("Bandwidth of the peak in Hz.");
         mid2.gain.setTooltip("Gain at the peak centre in dB.");
 
         styleLabel(low.cfLabel, "Shelf Hz");
         styleLabel(low.gainLabel, "Gain dB");
-        low.cf.setTooltip("Low shelf corner frequency. Frequencies below this are boosted or cut by the gain control.");
-        low.gain.setTooltip("Low shelf gain in decibels (0 = flat).");
+        low.bandLabel.setTooltip("Low shelf: boosts or cuts bass. It is not a low-pass filter — highs still pass. \"Shelf Hz\" is the turnover: far below it the curve reaches the Gain value.");
+        low.cf.setTooltip("Low shelf turnover frequency (Hz). Energy well below this frequency is tilted toward the Gain dB setting; above it the response flattens back toward 0 dB change (classic shelving EQ).");
+        low.gain.setTooltip("How much boost or cut applies in the bass region (0 dB = no change). Negative = gentle low cut.");
+
+        motionStatus.setJustificationType(juce::Justification::topLeft);
+        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(10.2f)));
+        motionStatus.setColour(juce::Label::textColourId, kAccentBlue);
+        motionStatus.setMinimumHorizontalScale(1.0f);
+        motionStatus.setText(buildEqMotionStatusLine(ap), juce::dontSendNotification);
+        motionStatus.setTooltip("While Motion amounts on Curve + Motion are above 0%, those EQ parameters are swept in the DSP even though the knobs do not move. "
+                                "Blue row outline = that band is affected. The green curve above shows the live result.");
+        addAndMakeVisible(motionStatus);
 
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "hiCf", hi.cf));
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "hiGain", hi.gain));
@@ -164,7 +484,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
         styleToggleDark(coreOn);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "coreOn", coreOn));
 
-        styleKnob(coreSat);
+        styleSliderDark(coreSat, kAccentGreen);
         styleLabel(coreSatLabel, "Sat %");
         addAndMakeVisible(coreSat);
         addAndMakeVisible(coreSatLabel);
@@ -197,13 +517,56 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
             s->textFromValueFunction = dbStringFromValue;
             s->valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         }
+
+        startTimerHz(15);
     }
 
-    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+    ~EqTabContent() override
+    {
+        stopTimer();
+        for (auto* band : {&hi, &mid1, &mid2, &low})
+        {
+            band->cf.setLookAndFeel(nullptr);
+            band->gain.setLookAndFeel(nullptr);
+            if (band->hasBw)
+                band->bw.setLookAndFeel(nullptr);
+        }
+    }
+
+    void timerCallback() override
+    {
+        motionStatus.setText(buildEqMotionStatusLine(proc.getAPVTS()), juce::dontSendNotification);
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(kPanelBlack);
+        auto& ap = proc.getAPVTS();
+        for (int r = 0; r < 4; ++r)
+        {
+            if (!motionRowRect[(size_t) r].isEmpty() && eqBandHasMotion(ap, r))
+            {
+                g.setColour(kAccentBlue.withAlpha(0.1f));
+                g.fillRoundedRectangle(motionRowRect[(size_t) r].toFloat().reduced(1), 5.f);
+                g.setColour(kAccentBlue.withAlpha(0.28f));
+                g.drawRoundedRectangle(motionRowRect[(size_t) r].toFloat().reduced(1), 5.f, 1.f);
+            }
+        }
+        if (eqGraphBounds.getHeight() > 24)
+            paintEqChainResponse(g, eqGraphBounds, proc, freqScratch, magScratch, -24.f, 24.f,
+                                 motionLfoDepthActive(proc.getAPVTS()), true);
+    }
 
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(8);
+        constexpr int kEqGraphH = 149;
+        eqGraphBounds = bounds.removeFromTop(kEqGraphH);
+        bounds.removeFromTop(5);
+        motionStatus.setBounds(bounds.removeFromTop(44));
+        bounds.removeFromTop(6);
+
         constexpr int kFooterH = kSliderColumnH + kGapCaption + kCaptionH + 8;
         auto footer = bounds.removeFromBottom(kFooterH);
         coreOn.setBounds(footer.removeFromLeft(108).removeFromTop(24).translated(0, 4));
@@ -212,31 +575,39 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
         coreSat.setBounds(cx, cy, kKnobSize, kSliderColumnH);
         coreSatLabel.setBounds(cx, coreSat.getBottom() + kGapCaption, kKnobSize, kCaptionH);
 
+        constexpr int bandStripW = 80;
+        constexpr int gapAfterBandStrip = 14;
+        constexpr int eqGap = 6;
+        const int step = kEqSliderColW + eqGap;
+        const int xCol0 = bounds.getX() + bandStripW + gapAfterBandStrip;
+
         auto placeRow = [&](BandKnobs& band, int rowIndex)
         {
-            const int y = bounds.getY() + rowIndex * kRowHeight;
-            band.bandLabel.setBounds(kLabelWidth - 36 + bounds.getX(), y + 18, 36, 22);
+            const int y = bounds.getY() + rowIndex * kEqRowHeight;
+            band.bandLabel.setBounds(bounds.getX() + 3, y + 8, bandStripW - 6, 40);
+            band.bandLabel.setJustificationType(juce::Justification::centredRight);
 
-            auto placeKnob = [&](juce::Slider& sl, juce::Label& cap, int x)
+            auto placeKnobCol = [&](juce::Slider& sl, juce::Label& cap, int colIndex)
             {
-                sl.setBounds(x, y, kKnobSize, kSliderColumnH);
-                cap.setBounds(x, sl.getBottom() + kGapCaption, kKnobSize, kCaptionH);
+                const int x = xCol0 + colIndex * step;
+                sl.setBounds(x, y, kEqSliderColW, kEqSliderColumnH);
+                cap.setBounds(x, sl.getBottom() + kGapCaption, kEqSliderColW, kCaptionH);
             };
-
-            const int gainX = bounds.getX() + kColGain - kColCfLeft;
-            placeKnob(band.gain, band.gainLabel, gainX);
 
             if (band.hasBw && band.hasCfInLeftColumn)
             {
-                placeKnob(band.cf, band.cfLabel, bounds.getX());
-                const int bwX = bounds.getX() + kColCfCenter - kColCfLeft;
-                placeKnob(band.bw, band.bwLabel, bwX);
+                placeKnobCol(band.cf, band.cfLabel, 0);
+                placeKnobCol(band.bw, band.bwLabel, 1);
+                placeKnobCol(band.gain, band.gainLabel, 3);
             }
             else
             {
-                const int cfX = bounds.getX() + kColCfCenter - kColCfLeft;
-                placeKnob(band.cf, band.cfLabel, cfX);
+                placeKnobCol(band.cf, band.cfLabel, 1);
+                placeKnobCol(band.gain, band.gainLabel, 3);
             }
+
+            const int rowRight = xCol0 + 3 * step + kEqSliderColW;
+            motionRowRect[(size_t) rowIndex] = { bounds.getX(), y, rowRight - bounds.getX() + 2, kEqRowHeight };
         };
 
         placeRow(hi, 0);
@@ -246,7 +617,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component
     }
 };
 
-struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component
+struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, private juce::Timer
 {
     struct Row
     {
@@ -262,10 +633,14 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component
         bool useBw = false;
     };
 
+    ParaEQ301AudioProcessor& proc;
     juce::Label stereoLabel;
     juce::Slider stereo;
     juce::Label motionHint;
+    juce::Label motionWhatMap;
+    juce::Label liveEqReadout;
     Row hi, m1, m2, lo;
+    juce::Rectangle<int> lfoDotHi, lfoDotM1, lfoDotM2, lfoDotLo;
 
     static void sk(juce::Slider& s)
     {
@@ -274,16 +649,39 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component
         styleSliderDark(s, juce::Colour(0xff4a8ad4));
     }
 
-    LfoTabContent(juce::AudioProcessorValueTreeState& ap,
+    LfoTabContent(ParaEQ301AudioProcessor& processor,
+                  juce::AudioProcessorValueTreeState& ap,
                   std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts)
+        : proc(processor)
     {
-        motionHint.setText("There is no separate \"Depth\" control. The percentage knobs are the amount:\n"
-                           "Gain % / Freq % / Width % = how much that band moves. 0% = off. Column 1 = LFO speed (Hz) only.",
-                           juce::dontSendNotification);
+        motionHint.setText(
+            "Motion = separate LFOs that sweep the EQ filters around the values on the EQ tab. The knobs are the center point; the audio path uses moving coefficients.\n"
+            "EQ gain % uses up to ±12 dB around the EQ gain knob (not master volume). Blue dots = LFO phase on that row.",
+            juce::dontSendNotification);
         motionHint.setJustificationType(juce::Justification::topLeft);
         motionHint.setFont(juce::Font(juce::FontOptions().withHeight(10.5f)));
         motionHint.setColour(juce::Label::textColourId, kAccentBlue);
         addAndMakeVisible(motionHint);
+
+        motionWhatMap.setText(
+            "What changes where:\n"
+            "  Hi row here  →  EQ tab Hi band:  Gain dB + Shelf Hz\n"
+            "  M1 / M2      →  EQ Mid1 / Mid2:  Gain dB + Peak Hz + Width Hz\n"
+            "  Lo row here  →  EQ Low band:     Gain dB + Shelf Hz\n"
+            "EQ tab: blue outline = bands with Motion; status line lists which knobs are swept. Curve + Motion tab: spectrum shows live magnitude including Motion.",
+            juce::dontSendNotification);
+        motionWhatMap.setJustificationType(juce::Justification::topLeft);
+        motionWhatMap.setFont(juce::Font(juce::FontOptions().withHeight(10.3f)));
+        motionWhatMap.setColour(juce::Label::textColourId, kTextBright);
+        addAndMakeVisible(motionWhatMap);
+
+        liveEqReadout.setJustificationType(juce::Justification::topLeft);
+        liveEqReadout.setFont(juce::Font(juce::FontOptions()
+                                             .withName(juce::Font::getDefaultMonospacedFontName())
+                                             .withHeight(10.0f)));
+        liveEqReadout.setColour(juce::Label::textColourId, kTextBright);
+        liveEqReadout.setMinimumHorizontalScale(1.0f);
+        addAndMakeVisible(liveEqReadout);
 
         stereoLabel.setText("L/R LFO phase", juce::dontSendNotification);
         stereoLabel.setJustificationType(juce::Justification::centredLeft);
@@ -297,70 +695,94 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component
         stereo.setTooltip("Phase offset between left and right channel LFOs (stereo width of modulation).");
 
         auto setupRow = [&](Row& r, const juce::String& name, bool bw,
-                            const char* rateId, const char* dg, const char* dc, const char* dbw)
+                            const char* rateId, const char* dg, const char* dc, const char* dbw,
+                            const juce::String& rowTargetsExplain)
         {
             r.title.setText(name, juce::dontSendNotification);
             r.title.setJustificationType(juce::Justification::centredRight);
             r.title.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             r.title.setColour(juce::Label::textColourId, kTextBright);
+            r.title.setTooltip(rowTargetsExplain);
             addAndMakeVisible(r.title);
             r.useBw = bw;
 
             sk(r.rate);
-            styleMotionCaption(r.rateL, "Speed Hz");
+            styleMotionCaption(r.rateL, "LFO Hz");
             addAndMakeVisible(r.rate);
             addAndMakeVisible(r.rateL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, rateId, r.rate));
-            r.rate.setTooltip("How fast the LFO runs (Hz). Does nothing by itself — raise Gain % / Freq % / Width % to hear motion.");
+            r.rate.setTooltip("LFO speed in Hz. On its own it does nothing: turn up EQ gain / EQ freq / EQ width amounts to hear motion.");
 
             sk(r.dGain);
-            styleMotionCaption(r.dGainL, "Gain %");
+            styleMotionCaption(r.dGainL, "EQ gain");
             addAndMakeVisible(r.dGain);
             addAndMakeVisible(r.dGainL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, dg, r.dGain));
-            r.dGain.setTooltip("How much the LFO pushes this band's EQ gain. 0% = off. 100% ≈ ±12 dB around the EQ tab gain.");
+            r.dGain.setTooltip("How strong the LFO wobbles this band’s EQ gain knob value. 100% = full ±12 dB swing around the EQ tab. "
+                               "This is not output volume — only the band’s boost/cut is animated.");
 
             sk(r.dCf);
-            styleMotionCaption(r.dCfL, "Freq %");
+            styleMotionCaption(r.dCfL, "EQ freq");
             addAndMakeVisible(r.dCf);
             addAndMakeVisible(r.dCfL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, dc, r.dCf));
-            r.dCf.setTooltip("How much the LFO moves centre or shelf frequency. 0% = off.");
+            r.dCf.setTooltip("How much the LFO pushes this band’s shelf corner or peak frequency around the Hz on the EQ tab.");
 
-            auto pct = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            auto pctNum = [](double v) { return juce::String(juce::roundToInt(v * 100.0)); };
             auto pctIn = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
-            r.dGain.textFromValueFunction = pct;
+            r.dGain.setTextValueSuffix(" %");
+            r.dCf.setTextValueSuffix(" %");
+            r.dGain.textFromValueFunction = pctNum;
             r.dGain.valueFromTextFunction = pctIn;
-            r.dCf.textFromValueFunction = pct;
+            r.dCf.textFromValueFunction = pctNum;
             r.dCf.valueFromTextFunction = pctIn;
 
             if (bw)
             {
                 sk(r.dBw);
-                styleMotionCaption(r.dBwL, "Width %");
+                styleMotionCaption(r.dBwL, "EQ width");
                 addAndMakeVisible(r.dBw);
                 addAndMakeVisible(r.dBwL);
                 atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, dbw, r.dBw));
-                r.dBw.textFromValueFunction = pct;
+                r.dBw.setTextValueSuffix(" %");
+                r.dBw.textFromValueFunction = pctNum;
                 r.dBw.valueFromTextFunction = pctIn;
-                r.dBw.setTooltip("How much the LFO moves peaking bandwidth (mid bands only). 0% = off.");
+                r.dBw.setTooltip("How much the LFO wobbles the mid peak’s bandwidth (Width Hz on EQ). Hi/Lo shelves have no width control.");
             }
         };
 
-        setupRow(hi, "Hi", false, "lfoHiRate", "lfoHiDepthGain", "lfoHiDepthCf", "");
-        setupRow(m1, "M1", true, "lfoM1Rate", "lfoM1DepthGain", "lfoM1DepthCf", "lfoM1DepthBw");
-        setupRow(m2, "M2", true, "lfoM2Rate", "lfoM2DepthGain", "lfoM2DepthCf", "lfoM2DepthBw");
-        setupRow(lo, "Lo", false, "lfoLoRate", "lfoLoDepthGain", "lfoLoDepthCf", "");
+        setupRow(hi, "Hi", false, "lfoHiRate", "lfoHiDepthGain", "lfoHiDepthCf", "",
+                 "This Motion row only drives the EQ tab’s Hi (high shelf) row: it can sweep Gain dB and Shelf Hz by the percentages you set.");
+        setupRow(m1, "M1", true, "lfoM1Rate", "lfoM1DepthGain", "lfoM1DepthCf", "lfoM1DepthBw",
+                 "This row only drives EQ Mid1: Gain dB, Peak Hz, and Width Hz — same three knobs as on the EQ tab.");
+        setupRow(m2, "M2", true, "lfoM2Rate", "lfoM2DepthGain", "lfoM2DepthCf", "lfoM2DepthBw",
+                 "This row only drives EQ Mid2: Gain dB, Peak Hz, and Width Hz — same three knobs as on the EQ tab.");
+        setupRow(lo, "Lo", false, "lfoLoRate", "lfoLoDepthGain", "lfoLoDepthCf", "",
+                 "This Motion row only drives the EQ tab’s Low (low shelf) row: Gain dB and Shelf Hz.");
+
+        startTimerHz(24);
     }
 
-    void placeRow(Row& r, juce::Rectangle<int> rowArea)
+    ~LfoTabContent() override { stopTimer(); }
+
+    void timerCallback() override
+    {
+        ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot snap;
+        proc.getMotionEffectiveEqSnapshot(snap);
+        liveEqReadout.setText(formatMotionLiveReadout(snap), juce::dontSendNotification);
+        repaint();
+    }
+
+    void placeRow(Row& r, juce::Rectangle<int> rowArea, juce::Rectangle<int>& lfoDotOut)
     {
         const int kw = 48;
         const int colGap = 6;
-        const int titleW = 38;
+        const int phaseS = 14;
+        const int titleW = 30;
         auto a = rowArea;
-        r.title.setBounds(a.getX(), a.getY() + 10, titleW, a.getHeight() - 12);
-        int x = a.getX() + titleW + colGap;
+        lfoDotOut = { a.getX() + 1, a.getY() + 8, phaseS, phaseS };
+        r.title.setBounds(a.getX() + phaseS + 4, a.getY() + 10, titleW, a.getHeight() - 12);
+        int x = a.getX() + phaseS + 4 + titleW + colGap;
 
         auto placeCol = [&](juce::Slider& sl, juce::Label& cap)
         {
@@ -379,20 +801,56 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
-        motionHint.setBounds(b.removeFromTop(48));
+        motionHint.setBounds(b.removeFromTop(50));
+        b.removeFromTop(4);
+        motionWhatMap.setBounds(b.removeFromTop(62));
         b.removeFromTop(4);
         const int topH = kSliderColumnH + 26;
         auto top = b.removeFromTop(topH);
         stereoLabel.setBounds(top.getX(), top.getY() + 8, 112, 18);
         stereo.setBounds(top.getX() + 118, top.getY() + 2, kKnobSize, kSliderColumnH);
+        b.removeFromTop(4);
+        liveEqReadout.setBounds(b.removeFromTop(56));
+        b.removeFromTop(4);
 
-        placeRow(hi, b.removeFromTop(kRowHeight));
-        placeRow(m1, b.removeFromTop(kRowHeight));
-        placeRow(m2, b.removeFromTop(kRowHeight));
-        placeRow(lo, b.removeFromTop(kRowHeight));
+        placeRow(hi, b.removeFromTop(kRowHeight), lfoDotHi);
+        placeRow(m1, b.removeFromTop(kRowHeight), lfoDotM1);
+        placeRow(m2, b.removeFromTop(kRowHeight), lfoDotM2);
+        placeRow(lo, b.removeFromTop(kRowHeight), lfoDotLo);
     }
 
-    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(kPanelBlack);
+        float ph[4];
+        proc.getMotionLfoPhases(ph);
+        auto& ap = proc.getAPVTS();
+        const float dHiG = ap.getRawParameterValue("lfoHiDepthGain")->load();
+        const float dHiC = ap.getRawParameterValue("lfoHiDepthCf")->load();
+        const float dM1G = ap.getRawParameterValue("lfoM1DepthGain")->load();
+        const float dM1C = ap.getRawParameterValue("lfoM1DepthCf")->load();
+        const float dM1B = ap.getRawParameterValue("lfoM1DepthBw")->load();
+        const float dM2G = ap.getRawParameterValue("lfoM2DepthGain")->load();
+        const float dM2C = ap.getRawParameterValue("lfoM2DepthCf")->load();
+        const float dM2B = ap.getRawParameterValue("lfoM2DepthBw")->load();
+        const float dLoG = ap.getRawParameterValue("lfoLoDepthGain")->load();
+        const float dLoC = ap.getRawParameterValue("lfoLoDepthCf")->load();
+        const bool anyMotion = (dHiG + dHiC + dM1G + dM1C + dM1B + dM2G + dM2C + dM2B + dLoG + dLoC) > 1.0e-5f;
+
+        auto bandBright = [&](float sumDepth) -> float
+        {
+            if (!anyMotion)
+                return 0.15f;
+            if (sumDepth <= 1.0e-6f)
+                return 0.4f;
+            return 1.f;
+        };
+
+        paintMotionLfoDot(g, lfoDotHi, ph[0], bandBright(dHiG + dHiC), kAccentBlue);
+        paintMotionLfoDot(g, lfoDotM1, ph[1], bandBright(dM1G + dM1C + dM1B), kAccentBlue);
+        paintMotionLfoDot(g, lfoDotM2, ph[2], bandBright(dM2G + dM2C + dM2B), kAccentBlue);
+        paintMotionLfoDot(g, lfoDotLo, ph[3], bandBright(dLoG + dLoC), kAccentBlue);
+    }
 };
 
 struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component
@@ -462,7 +920,12 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component
 
 struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, private juce::Timer
 {
-    explicit CurveTabContent(ParaEQ301AudioProcessor& p) : proc(p) { startTimerHz(16); }
+    explicit CurveTabContent(ParaEQ301AudioProcessor& p) : proc(p)
+    {
+        startTimerHz(20);
+        specBefore.assign(240, -100.f);
+        specAfter.assign(240, -100.f);
+    }
 
     ~CurveTabContent() override { stopTimer(); }
 
@@ -474,21 +937,21 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
     {
         g.fillAll(kPanelBlack);
         auto bounds = plotArea;
-        if (bounds.getHeight() < 80)
+        if (bounds.getHeight() < 100)
             return;
 
-        const int footerH = 42;
+        const int footerH = 48;
         auto footer = bounds.removeFromBottom(footerH);
         bounds.removeFromTop(2);
         g.setColour(kTextMuted);
         g.setFont(10.5f);
-        g.drawFittedText("Green line: combined magnitude of low shelf + two peaking bands + high shelf (same IIR coefficients as the DSP, channel 0). "
-                         "With Motion enabled, the curve tracks channel 0 in real time. Numeric In/Out RMS also appears in the top bar.",
-                         footer, juce::Justification::topLeft, 6);
+        g.drawFittedText("Top: FFT spectrum of the left channel — green = before the 4-band EQ (after Core color if on), blue = after the EQ (before limiter). "
+                         "Bottom: theoretical IIR magnitude from current coefficients (smoothed). Play audio to see the spectrum; silence shows the noise floor.",
+                         footer, juce::Justification::topLeft, 7);
 
         g.setFont(12.f);
         g.setColour(kTextBright);
-        g.drawText("EQ response & levels", bounds.removeFromTop(16), juce::Justification::centred, true);
+        g.drawText("Spectrum (before / after EQ) + model curve", bounds.removeFromTop(16), juce::Justification::centred, true);
 
         const int meterBlockH = 44;
         auto meters = bounds.removeFromBottom(meterBlockH + 6);
@@ -497,7 +960,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         drawLevelBar(g, meters, proc.getDebugOutputRms(), "Out", kAccentBlue);
 
         auto plot = bounds.reduced(6, 2);
-        if (plot.getHeight() < 36)
+        if (plot.getHeight() < 80)
             return;
 
         const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 44100.0;
@@ -506,6 +969,9 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         {
             freqScratch.resize((size_t) nPts);
             magScratch.resize((size_t) nPts);
+            eqMagSmoothed.resize((size_t) nPts);
+            specBefore.resize((size_t) nPts);
+            specAfter.resize((size_t) nPts);
         }
         const double fLo = 30.0;
         const double fHi = juce::jmin(20000.0, sr * 0.48);
@@ -516,72 +982,199 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             const double t = (double) i / (double) (nPts - 1);
             freqScratch[(size_t) i] = std::exp(logLo + t * (logHi - logLo));
         }
+
+        proc.getSpectrumBeforeAfterDb(sr, freqScratch.data(), nPts, specBefore.data(), specAfter.data());
+
         proc.getEqChainMagnitudeDb(sr, freqScratch.data(), magScratch.data(), nPts);
+        for (int i = 0; i < nPts; ++i)
+        {
+            float v = magScratch[(size_t) i];
+            if (!std::isfinite(v))
+                v = 0.f;
+            magScratch[(size_t) i] = v;
+        }
+        for (int i = 0; i < nPts; ++i)
+        {
+            const int im = juce::jmax(0, i - 1);
+            const int ip = juce::jmin(nPts - 1, i + 1);
+            eqMagSmoothed[(size_t) i] = 0.25f * magScratch[(size_t) im] + 0.5f * magScratch[(size_t) i] + 0.25f * magScratch[(size_t) ip];
+        }
 
-        const float dMin = -18.0f;
-        const float dMax = 18.0f;
+        auto specArea = plot.removeFromTop(juce::jmax(110, plot.getHeight() * 58 / 100));
+        auto eqArea = plot;
+        specArea.removeFromBottom(10);
+        eqArea.removeFromTop(4);
 
-        juce::Rectangle<int> graph = plot;
-        graph.removeFromBottom(12);
+        auto drawLogGrid = [&](juce::Rectangle<int> graph)
+        {
+            g.setColour(kTextMuted);
+            g.setFont(9.0f);
+            for (double hz : { 100.0, 1000.0, 10000.0 })
+            {
+                if (hz < fLo || hz > fHi)
+                    continue;
+                const double lf = std::log(hz);
+                const float x = (float) (graph.getX() + (lf - logLo) / (logHi - logLo) * (double) graph.getWidth());
+                g.drawVerticalLine(juce::roundToInt(x), (float) graph.getY(), (float) graph.getBottom());
+                const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
+                g.drawText(lab, juce::roundToInt(x) - 12, graph.getBottom() + 2, 24, 10, juce::Justification::centred);
+            }
+        };
 
-        g.setColour(juce::Colour(0xff1c1c1c));
-        g.fillRoundedRectangle(graph.toFloat(), 4.f);
-        g.setColour(juce::Colour(0xff353535));
-        g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
-
-        auto xOfF = [&](double f) -> float
+        auto xOfF = [&](double f, const juce::Rectangle<int>& graph) -> float
         {
             f = juce::jlimit(fLo, fHi, f);
             const double lf = std::log(f);
             return (float) (graph.getX() + (lf - logLo) / (logHi - logLo) * (double) graph.getWidth());
         };
 
-        auto yOfDb = [&](float db) -> float
+        // --- Spectrum panel ---
         {
-            const float n = juce::jlimit(dMin, dMax, db);
-            const float norm = (n - dMin) / (dMax - dMin);
-            return (float) graph.getBottom() - norm * (float) graph.getHeight();
-        };
+            juce::Rectangle<int> graph = specArea;
+            graph.removeFromBottom(14);
+            g.setColour(juce::Colour(0xff141414));
+            g.fillRoundedRectangle(graph.toFloat(), 4.f);
+            g.setColour(juce::Colour(0xff353535));
+            g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
 
-        for (float db : { -12.f, -6.f, 0.f, 6.f, 12.f })
-        {
-            if (db < dMin || db > dMax)
-                continue;
-            const float y = yOfDb(db);
-            g.setColour(db == 0.f ? juce::Colour(0xff555555) : juce::Colour(0xff303030));
-            g.drawHorizontalLine(juce::roundToInt(y), (float) graph.getX(), (float) graph.getRight());
-        }
-
-        g.setColour(kTextMuted);
-        g.setFont(9.0f);
-        for (double hz : { 100.0, 1000.0, 10000.0 })
-        {
-            if (hz < fLo || hz > fHi)
-                continue;
-            const float x = xOfF(hz);
-            g.drawVerticalLine(juce::roundToInt(x), (float) graph.getY(), (float) graph.getBottom());
-            const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
-            g.drawText(lab, juce::roundToInt(x) - 12, graph.getBottom() + 2, 24, 10, juce::Justification::centred);
-        }
-
-        juce::Path path;
-        bool started = false;
-        for (int i = 0; i < nPts; ++i)
-        {
-            const float x = xOfF(freqScratch[(size_t) i]);
-            const float y = yOfDb(magScratch[(size_t) i]);
-            if (!started)
+            float peak = -200.f;
+            for (int i = 0; i < nPts; ++i)
             {
-                path.startNewSubPath(x, y);
-                started = true;
+                peak = juce::jmax(peak, specBefore[(size_t) i], specAfter[(size_t) i]);
             }
-            else
+            const float topDb = juce::jmin(0.f, peak + 4.f);
+            const float botDb = topDb - 56.f;
+            const float yBottom = (float) graph.getBottom();
+            auto ySpec = [&](float db) -> float
             {
-                path.lineTo(x, y);
+                const float t = (db - botDb) / juce::jmax(1.0e-3f, topDb - botDb);
+                return yBottom - juce::jlimit(0.f, 1.f, t) * (float) graph.getHeight();
+            };
+
+            drawLogGrid(graph);
+
+            juce::Path fillB;
+            bool st = false;
+            for (int i = 0; i < nPts; ++i)
+            {
+                const float x = xOfF(freqScratch[(size_t) i], graph);
+                const float y = ySpec(specBefore[(size_t) i]);
+                if (!st)
+                {
+                    fillB.startNewSubPath(x, yBottom);
+                    fillB.lineTo(x, y);
+                    st = true;
+                }
+                else
+                {
+                    fillB.lineTo(x, y);
+                }
             }
+            fillB.lineTo(xOfF(freqScratch[(size_t) (nPts - 1)], graph), yBottom);
+            fillB.closeSubPath();
+            g.setColour(kAccentGreen.withAlpha(0.22f));
+            g.fillPath(fillB);
+
+            juce::Path lineB;
+            st = false;
+            for (int i = 0; i < nPts; ++i)
+            {
+                const float x = xOfF(freqScratch[(size_t) i], graph);
+                const float y = ySpec(specBefore[(size_t) i]);
+                if (!st)
+                {
+                    lineB.startNewSubPath(x, y);
+                    st = true;
+                }
+                else
+                {
+                    lineB.lineTo(x, y);
+                }
+            }
+            g.setColour(kAccentGreen.withAlpha(0.75f));
+            g.strokePath(lineB, juce::PathStrokeType(1.4f));
+
+            juce::Path lineA;
+            st = false;
+            for (int i = 0; i < nPts; ++i)
+            {
+                const float x = xOfF(freqScratch[(size_t) i], graph);
+                const float y = ySpec(specAfter[(size_t) i]);
+                if (!st)
+                {
+                    lineA.startNewSubPath(x, y);
+                    st = true;
+                }
+                else
+                {
+                    lineA.lineTo(x, y);
+                }
+            }
+            g.setColour(kAccentBlue.withAlpha(0.95f));
+            g.strokePath(lineA, juce::PathStrokeType(1.8f));
+
+            g.setColour(kTextBright);
+            g.setFont(9.5f);
+            g.drawText("Before EQ", graph.getX() + 6, graph.getY() + 4, 90, 14, juce::Justification::centredLeft);
+            g.setColour(kAccentBlue);
+            g.drawText("After EQ", graph.getRight() - 96, graph.getY() + 4, 90, 14, juce::Justification::centredRight);
         }
-        g.setColour(kAccentGreen.withAlpha(0.95f));
-        g.strokePath(path, juce::PathStrokeType(2.0f));
+
+        // --- Theoretical EQ curve (smaller) ---
+        {
+            g.setColour(kTextMuted);
+            g.setFont(10.f);
+            g.drawText("IIR magnitude (smoothed, ±18 dB)", eqArea.removeFromTop(12), juce::Justification::centredLeft, true);
+            juce::Rectangle<int> graph = eqArea;
+            graph.removeFromBottom(12);
+            if (graph.getHeight() < 24)
+                return;
+
+            const float dMin = -18.0f;
+            const float dMax = 18.0f;
+
+            g.setColour(juce::Colour(0xff1c1c1c));
+            g.fillRoundedRectangle(graph.toFloat(), 4.f);
+            g.setColour(juce::Colour(0xff353535));
+            g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
+
+            auto yOfDb = [&](float db) -> float
+            {
+                const float n = juce::jlimit(dMin, dMax, db);
+                const float norm = (n - dMin) / (dMax - dMin);
+                return (float) graph.getBottom() - norm * (float) graph.getHeight();
+            };
+
+            for (float db : { -12.f, -6.f, 0.f, 6.f, 12.f })
+            {
+                if (db < dMin || db > dMax)
+                    continue;
+                const float y = yOfDb(db);
+                g.setColour(db == 0.f ? juce::Colour(0xff555555) : juce::Colour(0xff303030));
+                g.drawHorizontalLine(juce::roundToInt(y), (float) graph.getX(), (float) graph.getRight());
+            }
+
+            drawLogGrid(graph);
+
+            juce::Path path;
+            bool started = false;
+            for (int i = 0; i < nPts; ++i)
+            {
+                const float x = xOfF(freqScratch[(size_t) i], graph);
+                const float y = yOfDb(eqMagSmoothed[(size_t) i]);
+                if (!started)
+                {
+                    path.startNewSubPath(x, y);
+                    started = true;
+                }
+                else
+                {
+                    path.lineTo(x, y);
+                }
+            }
+            g.setColour(kAccentGreen.withAlpha(0.9f));
+            g.strokePath(path, juce::PathStrokeType(1.6f));
+        }
     }
 
     static void drawLevelBar(juce::Graphics& g, juce::Rectangle<int> r, float rmsLinear, const juce::String& name, juce::Colour col)
@@ -615,6 +1208,46 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
     juce::Rectangle<int> plotArea;
     std::vector<double> freqScratch;
     std::vector<float> magScratch;
+    std::vector<float> eqMagSmoothed;
+    std::vector<float> specBefore;
+    std::vector<float> specAfter;
+};
+
+/** Spectrum / meters (top) + Motion LFO controls (bottom) on one tab. */
+struct ParaEQ301AudioProcessorEditor::CurveMotionTabContent : public juce::Component
+{
+    CurveMotionTabContent(ParaEQ301AudioProcessor& processor,
+                          juce::AudioProcessorValueTreeState& ap,
+                          std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts)
+        : curve(processor), motion(processor, ap, atts)
+    {
+        addAndMakeVisible(curve);
+        addAndMakeVisible(motion);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(4);
+        constexpr int kGap = 6;
+        constexpr int kMotionMin = 230;
+        if (b.getHeight() < kMotionMin + 120)
+        {
+            curve.setBounds(b.removeFromTop(juce::jmax(100, b.getHeight() / 3)));
+            b.removeFromTop(kGap);
+            motion.setBounds(b);
+            return;
+        }
+        int curveH = b.getHeight() * 40 / 100;
+        curveH = juce::jlimit(200, 300, curveH);
+        if (curveH + kGap + kMotionMin > b.getHeight())
+            curveH = juce::jmax(180, b.getHeight() - kGap - kMotionMin);
+        curve.setBounds(b.removeFromTop(curveH));
+        b.removeFromTop(kGap);
+        motion.setBounds(b);
+    }
+
+    CurveTabContent curve;
+    LfoTabContent motion;
 };
 
 ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProcessor& p)
@@ -622,14 +1255,12 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 {
     auto& ap = proc.getAPVTS();
 
-    eqPage = std::make_unique<EqTabContent>(ap, attachments, buttonAttachments);
-    curvePage = std::make_unique<CurveTabContent>(proc);
-    lfoPage = std::make_unique<LfoTabContent>(ap, attachments);
+    eqPage = std::make_unique<EqTabContent>(proc, ap, attachments, buttonAttachments);
+    curveMotionPage = std::make_unique<CurveMotionTabContent>(proc, ap, attachments);
     outPage = std::make_unique<OutTabContent>(ap, attachments, buttonAttachments);
 
     tabs.addTab("EQ", kPanelBlack, eqPage.get(), false);
-    tabs.addTab("Curve", kPanelBlack, curvePage.get(), false);
-    tabs.addTab("Motion", kPanelBlack, lfoPage.get(), false);
+    tabs.addTab("Curve + Motion", kPanelBlack, curveMotionPage.get(), false);
     tabs.addTab("Output", kPanelBlack, outPage.get(), false);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, kPanelBlack);
@@ -653,7 +1284,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(420, 600);
+    setSize(500, 860);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
