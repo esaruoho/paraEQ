@@ -550,6 +550,10 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
+        // Some hosts call processBlock with numChannels==0 (no I/O buffer yet). Motion must still advance
+        // channel-0 coefficients and publish the EQ snapshot or motionEngaged stays false and Peak Hz never tracks.
+        const int coeffChannels = juce::jmax(1, numCh);
+
         for (int n = 0; n < numSamps; ++n)
         {
             lfoPhase[0] += rHi;
@@ -562,16 +566,16 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
             const bool updateCoeffs = (n % kCoeffUpdateInterval) == 0;
 
-            for (int ch = 0; ch < numCh; ++ch)
+            if (updateCoeffs)
             {
-                const float phaseShift = (numCh > 1 && ch == 1) ? stereoRad : 0.f;
-                const float sHi = std::sin(kTwoPi * lfoPhase[0] + phaseShift);
-                const float sM1 = std::sin(kTwoPi * lfoPhase[1] + phaseShift);
-                const float sM2 = std::sin(kTwoPi * lfoPhase[2] + phaseShift);
-                const float sLo = std::sin(kTwoPi * lfoPhase[3] + phaseShift);
-
-                if (updateCoeffs)
+                for (int ch = 0; ch < coeffChannels; ++ch)
                 {
+                    const float phaseShift = (coeffChannels > 1 && ch == 1) ? stereoRad : 0.f;
+                    const float sHi = std::sin(kTwoPi * lfoPhase[0] + phaseShift);
+                    const float sM1 = std::sin(kTwoPi * lfoPhase[1] + phaseShift);
+                    const float sM2 = std::sin(kTwoPi * lfoPhase[2] + phaseShift);
+                    const float sLo = std::sin(kTwoPi * lfoPhase[3] + phaseShift);
+
                     const float hiCf = modCfHz(baseHiCf, 500.f, 18000.f, sHi, dHiC);
                     const float hiGain = modGainDb(baseHiG, sHi, dHiG);
                     const float m1f = modCfHz(baseM1f, 20.f, 18000.f, sM1, dM1C);
@@ -587,7 +591,10 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     if (ch == 0)
                         publishMotionEqUiSnapshot(hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
                 }
+            }
 
+            for (int ch = 0; ch < numCh; ++ch)
+            {
                 float* data = buffer.getWritePointer(ch);
                 float x = data[n];
                 x = applyCoreSaturation(x, coreDrive);
