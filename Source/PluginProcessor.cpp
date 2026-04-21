@@ -331,7 +331,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "core2Sat", "Sat 2 amount",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
@@ -546,12 +546,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
 
     layout.add(std::make_unique<juce::AudioParameterBool>("outLimOn", "Output limiter", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "outLimThresh", "Lim threshold",
+        "outLimThresh", "Limiter threshold",
         juce::NormalisableRange<float>(-16.0f, -0.3f, 0.1f),
         -2.5f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "outLimRelease", "Lim release",
+        "outLimRelease", "Limiter release",
         juce::NormalisableRange<float>(20.0f, 400.0f, 1.0f, 0.35f),
         90.0f,
         juce::AudioParameterFloatAttributes().withLabel("ms")));
@@ -567,7 +567,8 @@ ParaEQ301AudioProcessor::ParaEQ301AudioProcessor()
 {
     for (auto& p : motionLfoUiPhase)
         p.store(0.f, std::memory_order_relaxed);
-    publishMotionEqUiSnapshot(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false);
+    publishMotionEqUiSnapshot(0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false);
+    publishMotionEqUiSnapshot(1, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false);
     spectrumSeq.store(0, std::memory_order_relaxed);
     for (int i = 0; i < kSpectrumBins; ++i)
     {
@@ -663,7 +664,20 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
 
     updateFiltersUniform(currentSampleRate);
     updateRoastShelfFilters(currentSampleRate);
-    publishMotionEqUiSnapshot(apvts.getRawParameterValue("hiCf")->load(),
+    publishMotionEqUiSnapshot(0,
+                              apvts.getRawParameterValue("hiCf")->load(),
+                              apvts.getRawParameterValue("hiGain")->load(),
+                              apvts.getRawParameterValue("mid1Cf")->load(),
+                              apvts.getRawParameterValue("mid1Bw")->load(),
+                              apvts.getRawParameterValue("mid1Gain")->load(),
+                              apvts.getRawParameterValue("mid2Cf")->load(),
+                              apvts.getRawParameterValue("mid2Bw")->load(),
+                              apvts.getRawParameterValue("mid2Gain")->load(),
+                              apvts.getRawParameterValue("lowCf")->load(),
+                              apvts.getRawParameterValue("lowGain")->load(),
+                              false);
+    publishMotionEqUiSnapshot(1,
+                              apvts.getRawParameterValue("hiCf")->load(),
                               apvts.getRawParameterValue("hiGain")->load(),
                               apvts.getRawParameterValue("mid1Cf")->load(),
                               apvts.getRawParameterValue("mid1Bw")->load(),
@@ -699,23 +713,39 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
     publishEqCurveMagnitudeSnapshot();
 }
 
-void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
+void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(int channelIndex, float hiCf, float hiGainDb,
                                                          float m1f, float m1bw, float m1GainDb,
                                                          float m2f, float m2bw, float m2GainDb,
                                                          float loCf, float loGainDb,
                                                          bool engaged) noexcept
 {
-    motionUiHiCf.store(hiCf, std::memory_order_relaxed);
-    motionUiHiGainDb.store(hiGainDb, std::memory_order_relaxed);
-    motionUiM1Cf.store(m1f, std::memory_order_relaxed);
-    motionUiM1Bw.store(m1bw, std::memory_order_relaxed);
-    motionUiM1GainDb.store(m1GainDb, std::memory_order_relaxed);
-    motionUiM2Cf.store(m2f, std::memory_order_relaxed);
-    motionUiM2Bw.store(m2bw, std::memory_order_relaxed);
-    motionUiM2GainDb.store(m2GainDb, std::memory_order_relaxed);
-    motionUiLoCf.store(loCf, std::memory_order_relaxed);
-    motionUiLoGainDb.store(loGainDb, std::memory_order_relaxed);
-    motionUiEngaged.store(engaged ? (std::uint8_t) 1 : (std::uint8_t) 0, std::memory_order_relaxed);
+    if (channelIndex <= 0)
+    {
+        motionUiHiCf.store(hiCf, std::memory_order_relaxed);
+        motionUiHiGainDb.store(hiGainDb, std::memory_order_relaxed);
+        motionUiM1Cf.store(m1f, std::memory_order_relaxed);
+        motionUiM1Bw.store(m1bw, std::memory_order_relaxed);
+        motionUiM1GainDb.store(m1GainDb, std::memory_order_relaxed);
+        motionUiM2Cf.store(m2f, std::memory_order_relaxed);
+        motionUiM2Bw.store(m2bw, std::memory_order_relaxed);
+        motionUiM2GainDb.store(m2GainDb, std::memory_order_relaxed);
+        motionUiLoCf.store(loCf, std::memory_order_relaxed);
+        motionUiLoGainDb.store(loGainDb, std::memory_order_relaxed);
+        motionUiEngaged.store(engaged ? (std::uint8_t) 1 : (std::uint8_t) 0, std::memory_order_relaxed);
+    }
+    else
+    {
+        motionUiHiCfR.store(hiCf, std::memory_order_relaxed);
+        motionUiHiGainDbR.store(hiGainDb, std::memory_order_relaxed);
+        motionUiM1CfR.store(m1f, std::memory_order_relaxed);
+        motionUiM1BwR.store(m1bw, std::memory_order_relaxed);
+        motionUiM1GainDbR.store(m1GainDb, std::memory_order_relaxed);
+        motionUiM2CfR.store(m2f, std::memory_order_relaxed);
+        motionUiM2BwR.store(m2bw, std::memory_order_relaxed);
+        motionUiM2GainDbR.store(m2GainDb, std::memory_order_relaxed);
+        motionUiLoCfR.store(loCf, std::memory_order_relaxed);
+        motionUiLoGainDbR.store(loGainDb, std::memory_order_relaxed);
+    }
 }
 
 void ParaEQ301AudioProcessor::publishEqCurveMagnitudeSnapshot() noexcept
@@ -911,7 +941,7 @@ void ParaEQ301AudioProcessor::updateFiltersForChannel(int ch, double sampleRate,
     const float m2Lin = juce::Decibels::decibelsToGain(m2GainDb);
     const float hiLin = juce::Decibels::decibelsToGain(hiGainDb);
     const bool univBell = apvts.getRawParameterValue("univBell")->load() > 0.5f;
-    *lowShelfPerChannel[i].coefficients = *Coefficients::makeLowShelf(sampleRate, static_cast<double>(lowCf), kShelfQ, lowLin);
+    *lowShelfPerChannel[i].coefficients = *Coefficients::makeLowShelf(sampleRate, lowCf, kShelfQ, lowLin);
     if (univBell)
     {
         *mid1PeakPerChannel[i].coefficients = *makeOrfanidisPeakCoefficients(sampleRate, static_cast<double>(m1f), (double) q1, (double) m1Lin);
@@ -919,10 +949,10 @@ void ParaEQ301AudioProcessor::updateFiltersForChannel(int ch, double sampleRate,
     }
     else
     {
-        *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m1f), q1, m1Lin);
-        *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m2f), q2, m2Lin);
+        *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, m1f, q1, m1Lin);
+        *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, m2f, q2, m2Lin);
     }
-    *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, static_cast<double>(hiCf), kShelfQ, hiLin);
+    *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, hiCf, kShelfQ, hiLin);
 }
 
 void ParaEQ301AudioProcessor::updateRoastShelfFilters(double sampleRate) noexcept
@@ -1144,8 +1174,9 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     const float loGain = modGainDb(baseLoG, sLo, dLoG);
 
                     updateFiltersForChannel(ch, sr, loCf, loGain, m1f, m1bw, m1g, m2f, m2bw, m2g, hiCf, hiGain);
-                    if (ch == 0)
-                        publishMotionEqUiSnapshot(hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
+                    publishMotionEqUiSnapshot(ch, hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
+                    if (coeffChannels < 2 && ch == 0)
+                        publishMotionEqUiSnapshot(1, hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
                 }
             }
         }
@@ -1294,8 +1325,12 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     }
 
     if (!anyLfo)
-        publishMotionEqUiSnapshot(baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
+    {
+        publishMotionEqUiSnapshot(0, baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
                                   baseM2f, baseM2bw, baseM2g, baseLoCf, baseLoG, false);
+        publishMotionEqUiSnapshot(1, baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
+                                  baseM2f, baseM2bw, baseM2g, baseLoCf, baseLoG, false);
+    }
 
     const float trimLin = juce::Decibels::decibelsToGain(apvts.getRawParameterValue("roastOutputTrimDb")->load());
     if (std::abs(trimLin - 1.f) > 1.0e-5f)
@@ -1413,6 +1448,16 @@ void ParaEQ301AudioProcessor::getMotionEffectiveEqSnapshot(MotionEffectiveEqSnap
     s.mid2GainDb = motionUiM2GainDb.load(std::memory_order_relaxed);
     s.loCfHz = motionUiLoCf.load(std::memory_order_relaxed);
     s.loGainDb = motionUiLoGainDb.load(std::memory_order_relaxed);
+    s.hiCfHzR = motionUiHiCfR.load(std::memory_order_relaxed);
+    s.hiGainDbR = motionUiHiGainDbR.load(std::memory_order_relaxed);
+    s.mid1CfHzR = motionUiM1CfR.load(std::memory_order_relaxed);
+    s.mid1BwHzR = motionUiM1BwR.load(std::memory_order_relaxed);
+    s.mid1GainDbR = motionUiM1GainDbR.load(std::memory_order_relaxed);
+    s.mid2CfHzR = motionUiM2CfR.load(std::memory_order_relaxed);
+    s.mid2BwHzR = motionUiM2BwR.load(std::memory_order_relaxed);
+    s.mid2GainDbR = motionUiM2GainDbR.load(std::memory_order_relaxed);
+    s.loCfHzR = motionUiLoCfR.load(std::memory_order_relaxed);
+    s.loGainDbR = motionUiLoGainDbR.load(std::memory_order_relaxed);
     s.motionEngaged = motionUiEngaged.load(std::memory_order_relaxed) != 0;
 }
 
@@ -1584,7 +1629,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         case 0:
             apvtsSetBool01(ap, "linearEqListen", false);
             apvtsSetBool01(ap, "core1Bypass", false);
-            apvtsSetBool01(ap, "core2Bypass", true);
+            apvtsSetBool01(ap, "core2Bypass", false);
             apvtsSetFloatPlain(ap, "coreSat", 0.f);
             apvtsSetFloatPlain(ap, "core2Sat", 0.f);
             zeroRoast();
@@ -1671,7 +1716,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
             apvtsSetFloatPlain(ap, "svfMix", 0.f);
             zeroRoast();
             apvtsSetBool01(ap, "core1Bypass", true);
-            apvtsSetBool01(ap, "core2Bypass", true);
+            apvtsSetBool01(ap, "core2Bypass", false);
             apvtsSetFloatPlain(ap, "coreSat", 0.f);
             apvtsSetFloatPlain(ap, "core2Sat", 0.f);
             flatEq();
@@ -1702,7 +1747,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         case 6:
             apvtsSetBool01(ap, "linearEqListen", false);
             apvtsSetBool01(ap, "core1Bypass", false);
-            apvtsSetBool01(ap, "core2Bypass", true);
+            apvtsSetBool01(ap, "core2Bypass", false);
             zeroRoast();
             apvtsSetFloatPlain(ap, "coreSat", 0.12f);
             apvtsSetFloatPlain(ap, "core2Sat", 0.f);

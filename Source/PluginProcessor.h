@@ -56,13 +56,17 @@ public:
     /** Per-band LFO phase 0–1 for Motion tab UI (Hi, M1, M2, Lo). Audio thread writes; GUI reads. */
     void getMotionLfoPhases(float* outFour) const noexcept;
 
-    /** Last-published channel-0 filter targets (Hz / dB) for Motion tab; updated each processBlock. */
+    /** Last-published per-channel filter targets for Motion / Curve UI (L from ch 0, R from ch 1). */
     struct MotionEffectiveEqSnapshot
     {
         float hiCfHz = 0, hiGainDb = 0;
         float mid1CfHz = 0, mid1BwHz = 0, mid1GainDb = 0;
         float mid2CfHz = 0, mid2BwHz = 0, mid2GainDb = 0;
         float loCfHz = 0, loGainDb = 0;
+        float hiCfHzR = 0, hiGainDbR = 0;
+        float mid1CfHzR = 0, mid1BwHzR = 0, mid1GainDbR = 0;
+        float mid2CfHzR = 0, mid2BwHzR = 0, mid2GainDbR = 0;
+        float loCfHzR = 0, loGainDbR = 0;
         bool motionEngaged = false;
     };
     void getMotionEffectiveEqSnapshot(MotionEffectiveEqSnapshot& s) const noexcept;
@@ -75,7 +79,7 @@ public:
     static constexpr int kSpectrumFftSize = 1 << kSpectrumFftOrder;
     static constexpr int kSpectrumBins = kSpectrumFftSize / 2 + 1;
 
-    /** Must match EQ / Curve tab log-spaced plot point count (PluginEditor.cpp nPts). */
+    /** Log-spaced EQ magnitude snapshot size; Curve + EQ tabs must use this count so GUI reads eqCurveMagPublished (no audio-thread coeff races). */
     static constexpr int kEqCurvePlotPoints = 220;
     static constexpr int kAnharmMaxPartials = 6;
 
@@ -99,7 +103,7 @@ private:
 
     void applyFactoryPreset(int index);
 
-    void publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
+    void publishMotionEqUiSnapshot(int channelIndex, float hiCf, float hiGainDb,
                                    float m1f, float m1bw, float m1GainDb,
                                    float m2f, float m2bw, float m2GainDb,
                                    float loCf, float loGainDb,
@@ -142,6 +146,10 @@ private:
     std::atomic<float> motionUiM1Cf, motionUiM1Bw, motionUiM1GainDb;
     std::atomic<float> motionUiM2Cf, motionUiM2Bw, motionUiM2GainDb;
     std::atomic<float> motionUiLoCf, motionUiLoGainDb;
+    std::atomic<float> motionUiHiCfR, motionUiHiGainDbR;
+    std::atomic<float> motionUiM1CfR, motionUiM1BwR, motionUiM1GainDbR;
+    std::atomic<float> motionUiM2CfR, motionUiM2BwR, motionUiM2GainDbR;
+    std::atomic<float> motionUiLoCfR, motionUiLoGainDbR;
     std::atomic<std::uint8_t> motionUiEngaged { 0 };
 
     std::atomic<float> debugInRms { 0.f };
