@@ -18,12 +18,16 @@ private:
     struct CurveTabContent;
     struct LfoTabContent;
     struct CurveMotionTabContent;
+    struct RoastTabContent;
     struct OutTabContent;
+    struct AnharmTabContent;
 
     ParaEQ301AudioProcessor& proc;
 
     std::unique_ptr<EqTabContent> eqPage;
     std::unique_ptr<CurveMotionTabContent> curveMotionPage;
+    std::unique_ptr<RoastTabContent> roastPage;
+    std::unique_ptr<AnharmTabContent> anharmPage;
     std::unique_ptr<OutTabContent> outPage;
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
@@ -39,6 +43,7 @@ private:
 
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> comboAttachments;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessorEditor)
 };

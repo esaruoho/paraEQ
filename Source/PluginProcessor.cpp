@@ -1,7 +1,38 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <complex>
 #include <cstring>
+
+void VaNonlinearSvfChannel::setCoeffs(float fcHz, float Q, double sampleRate) noexcept
+{
+    const double sr = juce::jmax(100.0, sampleRate);
+    fcHz = juce::jlimit(20.f, 19000.f, fcHz);
+    Q = juce::jlimit(0.25f, 40.f, Q);
+    const double g = std::tan(juce::MathConstants<double>::pi * (double) fcHz / sr);
+    k = (float) (1.0 / (double) Q);
+    const double a = 1.0 + g * (g + (double) k);
+    a1 = (float) (1.0 / a);
+    a2 = (float) (g * a1);
+    a3 = (float) (g * a2);
+}
+
+float VaNonlinearSvfChannel::processBandpassNonlinear(float in, float nl01) noexcept
+{
+    const float v0 = in;
+    float v3 = v0 - ic2eq;
+    const float nl = juce::jlimit(0.f, 1.f, nl01);
+    if (nl > 1.0e-6f)
+    {
+        const float t = 1.f + nl * 7.f;
+        v3 = std::tanh(t * v3) / t;
+    }
+    const float v1 = a1 * ic1eq + a2 * v3;
+    const float v2 = a2 * ic1eq + a3 * v3;
+    ic1eq = 2.f * v1 - ic1eq;
+    ic2eq = 2.f * v2 - ic2eq;
+    return v1;
+}
 
 namespace
 {
@@ -9,14 +40,116 @@ namespace
     constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
     constexpr int kCoeffUpdateInterval = 4;
 
-    float applyCoreSaturation(float x, float drive01) noexcept
+    using C = std::complex<double>;
+
+    /** Complex frequency response H(f) for JUCE IIR coefficients (same as mag·e^{jφ}). */
+    static C iirCoeffComplexAtHz(const juce::dsp::IIR::Coefficients<float>* c, double fHz, double sr) noexcept
+    {
+        if (c == nullptr)
+            return C(1.0, 0.0);
+        const double mag = c->getMagnitudeForFrequency(fHz, sr);
+        const double ph = c->getPhaseForFrequency(fHz, sr);
+        return C(mag * std::cos(ph), mag * std::sin(ph));
+    }
+
+    /** Linear bandpass V1/V0 for VaNonlinearSvfChannel at drive 0 (matches setCoeffs / trapezoidal one-step update). */
+    static C svfLinearBandpassTransferHz(double fcHz, double Q, double sr, double fHz) noexcept
+    {
+        fcHz = juce::jlimit(20.0, 19000.0, fcHz);
+        Q = juce::jlimit(0.25, 40.0, Q);
+        const double g = std::tan(juce::MathConstants<double>::pi * fcHz / sr);
+        const double kk = 1.0 / Q;
+        const double a = 1.0 + g * (g + kk);
+        const double ca1 = 1.0 / a;
+        const double ca2 = g * ca1;
+        const double ca3 = g * ca2;
+        const double w = juce::MathConstants<double>::twoPi * juce::jlimit(1.0, sr * 0.499, fHz) / sr;
+        const C z(std::cos(w), std::sin(w));
+        const C zp1 = z + C(1.0, 0.0);
+        const C one(1.0, 0.0);
+        const C two(2.0, 0.0);
+        const C D = zp1 - two * ca1;
+        if (std::abs(D) < 1.0e-20)
+            return C(0.0, 0.0);
+        const C v1_over_v3 = ca2 * zp1 / D;
+        const C inner = two * (ca2 * ca2) / D + ca3;
+        const C v3_over_v0 = one / (one + two * (one / zp1) * inner);
+        return v1_over_v3 * v3_over_v0;
+    }
+
+    /** Positive vs negative drive → more even harmonics when dirt > 0. */
+    float shapeMusicalWet(float x, float push, float dirt01) noexcept
+    {
+        const float d = juce::jlimit(0.f, 1.f, dirt01);
+        const float aPos = push * (1.0f + 0.55f * d);
+        const float aNeg = push * (1.0f - 0.38f * d);
+        if (x >= 0.0f)
+            return std::tanh(aPos * x);
+        return std::tanh(aNeg * x);
+    }
+
+    float dcBlockSample(float x, float& dcState, float leakCoeff) noexcept
+    {
+        dcState += leakCoeff * (x - dcState);
+        return x - dcState;
+    }
+
+    float applyCoreSaturation(float x, float drive01, float dirt01, float crunch01, float& dcState, float leakCoeff) noexcept
     {
         if (drive01 <= 1.0e-8f)
             return x;
-        x = juce::jlimit(-8.0f, 8.0f, x);
-        const float push = 1.0f + drive01 * 22.0f;
-        const float wet = std::tanh(push * x);
-        return x * (1.0f - drive01) + wet * drive01;
+        x = juce::jlimit(-10.0f, 10.0f, x);
+        const float push = 1.0f + drive01 * 24.0f;
+        const float c = juce::jlimit(0.f, 1.f, crunch01);
+        const float soft = shapeMusicalWet(x, push, dirt01);
+        const float xc = juce::jlimit(-12.f, 12.f, x * 1.15f);
+        const float roasted = xc / (1.f + std::abs(xc));
+        const float wet = soft * (1.f - c) + roasted * c;
+        const float y = x * (1.0f - drive01) + wet * drive01;
+        return dcBlockSample(y, dcState, leakCoeff);
+    }
+
+    float applyRoastPunch(float x, float amt01, float& env, float decayCoeff) noexcept
+    {
+        if (amt01 <= 1.0e-8f)
+            return x;
+        const float pk = std::abs(x);
+        env = juce::jmax(pk, env * decayCoeff);
+        const float thresh = 0.85f - amt01 * 0.63f;
+        float g = 1.f;
+        if (env > thresh)
+            g = 1.f + amt01 * (thresh / juce::jmax(1.0e-8f, env) - 1.f);
+        return x * g;
+    }
+
+    float applyRoastGlue(float x, float amt01, float& env, float decayCoeff) noexcept
+    {
+        if (amt01 <= 1.0e-8f)
+            return x;
+        const float pk = std::abs(x);
+        env = juce::jmax(pk, env * decayCoeff);
+        const float thresh = 0.95f - amt01 * 0.57f;
+        float g = 1.f;
+        if (env > thresh)
+            g = 1.f + amt01 * (thresh / juce::jmax(1.0e-8f, env) - 1.f);
+        return x * g;
+    }
+
+    float applyRoastLoFi(float x, float amt01, int& counter, float& hold, int downsample) noexcept
+    {
+        if (amt01 <= 1.0e-8f)
+            return x;
+        const int ds = juce::jlimit(1, 12, downsample);
+        ++counter;
+        if (counter >= ds)
+        {
+            counter = 0;
+            hold = x;
+        }
+        const int bits = juce::jlimit(5, 14, 14 - (int) (amt01 * 9.0f));
+        const float scale = std::pow(2.f, float(bits - 1));
+        float q = std::floor(hold * scale + 0.5f) / juce::jmax(1.0e-8f, scale);
+        return x * (1.f - amt01) + q * amt01;
     }
 
     juce::NormalisableRange<float> freqRangeSkewed(float minHz, float maxHz, float centreHz)
@@ -206,6 +339,183 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "coreDirt", "Core dirt",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.28f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "coreLifeDepth", "Core life depth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    auto coreLifeHzRange = juce::NormalisableRange<float>(0.03f, 2.5f, 0.01f, 0.4f);
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "coreLifeHz", "Core life rate",
+        coreLifeHzRange,
+        0.22f,
+        lfoRateHzParameterAttributes()));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "coreCrunch", "Core crunch",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastPreEmphDb", "Roast pre HF",
+        juce::NormalisableRange<float>(0.0f, 14.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastPostTiltDb", "Roast post tilt",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastBoostTrack", "Roast boost track",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastMidChain", "Roast mid-chain",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastPunch", "Roast punch",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastGlue", "Roast glue",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastLoFi", "Roast lo-fi",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastRing", "Roast ring",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastEnvDrive", "Roast env drive",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastFlutter", "Roast flutter",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastStereoWide", "Roast stereo life",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastOutputTrimDb", "Roast output trim",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "roastLowChain", "Roast low-chain",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("linearEqListen", "Linear EQ only", false));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "oversample", "Oversampling",
+        juce::StringArray{ "Off", "2x", "4x" }, 0));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("svfEnable", "SVF resonator", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "svfMix", "SVF mix",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "svfCf", "SVF cf",
+        freqRangeSkewed(80.0f, 12000.0f, 900.0f),
+        950.0f,
+        eqHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "svfQ", "SVF Q",
+        juce::NormalisableRange<float>(0.35f, 40.0f, 0.01f, 0.42f),
+        4.5f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "svfDrive", "SVF VA drive",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.22f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "svfGainDb", "SVF band gain",
+        juce::NormalisableRange<float>(-18.0f, 18.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "univBell", "Universal bell (Orfanidis)", false));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("anharmBankEnable", "Anharmonic partial bank", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmFundHz", "Anharm fund",
+        freqRangeSkewed(40.0f, 6000.0f, 200.0f),
+        220.0f,
+        eqHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmInharmB", "Inharmonicity B",
+        juce::NormalisableRange<float>(0.0f, 0.012f, 0.00005f, 0.38f),
+        0.0012f,
+        juce::AudioParameterFloatAttributes().withLabel("B")));
+    layout.add(std::make_unique<juce::AudioParameterInt>("anharmPartials", "Anharm partials", 2, kAnharmMaxPartials, 5));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmMix", "Anharm mix",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmPerPartialDb", "Anharm partial dB",
+        juce::NormalisableRange<float>(-18.0f, 12.0f, 0.1f),
+        -3.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmQ", "Anharm Q",
+        juce::NormalisableRange<float>(4.0f, 40.0f, 0.1f, 0.45f),
+        18.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmNl", "Anharm wet sat",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "anharmEnvQ", "Anharm env to Q",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.35f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
         "lfoStereoPhase", "LFO L/R phase",
         juce::NormalisableRange<float>(0.0f, 180.0f, 1.0f),
         0.0f,
@@ -283,11 +593,45 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
 
     for (int ch = 0; ch < maxChannelsPrepared; ++ch)
     {
-        lowShelfPerChannel[static_cast<size_t>(ch)].prepare(spec);
-        mid1PeakPerChannel[static_cast<size_t>(ch)].prepare(spec);
-        mid2PeakPerChannel[static_cast<size_t>(ch)].prepare(spec);
-        highShelfPerChannel[static_cast<size_t>(ch)].prepare(spec);
+        const size_t si = static_cast<size_t>(ch);
+        lowShelfPerChannel[si].prepare(spec);
+        mid1PeakPerChannel[si].prepare(spec);
+        mid2PeakPerChannel[si].prepare(spec);
+        highShelfPerChannel[si].prepare(spec);
+        roastPreHighShelf[si].prepare(spec);
+        roastPostHighShelf[si].prepare(spec);
+        for (int p = 0; p < kAnharmMaxPartials; ++p)
+            anharmPeakPerChannel[si][(size_t) p].prepare(spec);
     }
+
+    {
+        const float srF = static_cast<float>(currentSampleRate);
+        constexpr float dcCornerHz = 14.0f;
+        coreDcLeakCoeff = 1.0f - std::exp(-kTwoPi * dcCornerHz / juce::jmax(100.f, srF));
+        roastPunchDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.009)));
+        roastGlueDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.13)));
+        roastDriveEnvCoeff = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.007)));
+    }
+    for (size_t i = 0; i < coreDcPre.size(); ++i)
+    {
+        coreDcPre[i] = 0.f;
+        coreDcPost[i] = 0.f;
+        coreDcMid[i] = 0.f;
+        coreDcLow[i] = 0.f;
+        vaSvfPerChannel[i].reset();
+        for (int p = 0; p < kAnharmMaxPartials; ++p)
+            anharmPeakPerChannel[i][(size_t) p].reset();
+        roastPunchEnv[i] = 0.f;
+        roastGlueEnv[i] = 0.f;
+        roastDriveEnv[i] = 0.f;
+        roastLoFiCounter[i] = 0;
+        roastLoFiHold[i] = 0.f;
+    }
+    coreLifePhase = 0.f;
+    roastFlutterPhase = 0.f;
+    roastRingPhase = 0.f;
+    for (float& d : anharmSmoothedDrive)
+        d = 0.f;
 
     juce::dsp::ProcessSpec limSpec;
     limSpec.sampleRate = currentSampleRate;
@@ -318,6 +662,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
     debugOutRms.store(0.f, std::memory_order_relaxed);
 
     updateFiltersUniform(currentSampleRate);
+    updateRoastShelfFilters(currentSampleRate);
     publishMotionEqUiSnapshot(apvts.getRawParameterValue("hiCf")->load(),
                               apvts.getRawParameterValue("hiGain")->load(),
                               apvts.getRawParameterValue("mid1Cf")->load(),
@@ -340,6 +685,16 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
             const double t = (double) i / (double) (kEqCurvePlotPoints - 1);
             eqCurveFreqHz[(size_t) i] = std::exp(logLo + t * (logHi - logLo));
         }
+    }
+    lastEqCurveEvalRate = currentSampleRate;
+    roastOversampler.reset();
+    preparedRoastOsFactorExp = 0;
+    preparedRoastOsChannels = 0;
+    preparedRoastOsHostSamples = 0;
+    if (reportedOsLatencySamples != 0)
+    {
+        reportedOsLatencySamples = 0;
+        setLatencySamples(0);
     }
     publishEqCurveMagnitudeSnapshot();
 }
@@ -365,7 +720,7 @@ void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(float hiCf, float hiGain
 
 void ParaEQ301AudioProcessor::publishEqCurveMagnitudeSnapshot() noexcept
 {
-    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    const double sr = lastEqCurveEvalRate > 0.0 ? lastEqCurveEvalRate : currentSampleRate;
     const double nyq = sr * 0.499;
 
     eqCurveMagSeq.fetch_add(1u, std::memory_order_acq_rel);
@@ -398,10 +753,9 @@ void ParaEQ301AudioProcessor::publishEqCurveMagnitudeSnapshot() noexcept
 void ParaEQ301AudioProcessor::getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz,
                                                      float* magnitudesDb, int numPoints) const noexcept
 {
-    // Coefficients are built for currentSampleRate (prepareToPlay / processBlock). Evaluating |H(f)|
-    // at any other rate skews the curve (often pushing the trace to the top of a fixed dB scale).
+    // Coefficients follow the rate used in the last audio block (host rate, or oversampled rate when OS is on).
     juce::ignoreUnused(sampleRate);
-    const double sr = currentSampleRate > 0.0 ? currentSampleRate : 44100.0;
+    const double sr = lastEqCurveEvalRate > 0.0 ? lastEqCurveEvalRate : currentSampleRate;
     const double nyq = sr * 0.499;
 
     if (numPoints == kEqCurvePlotPoints)
@@ -440,6 +794,62 @@ void ParaEQ301AudioProcessor::getEqChainMagnitudeDb(double sampleRate, const dou
 
         m = juce::jmax(1.0e-12, m);
         magnitudesDb[i] = static_cast<float>(juce::Decibels::gainToDecibels(m));
+    }
+}
+
+void ParaEQ301AudioProcessor::getEqChainPlusAnharmLinearDb(double sampleRate, const double* frequenciesHz,
+                                                         float* magnitudesDb, int numPoints) const noexcept
+{
+    juce::ignoreUnused(sampleRate);
+    const double sr = lastEqCurveEvalRate > 0.0 ? lastEqCurveEvalRate : currentSampleRate;
+    const double nyq = sr * 0.499;
+    const bool bankOn = apvts.getRawParameterValue("anharmBankEnable")->load() > 0.5f;
+    const float aMix = apvts.getRawParameterValue("anharmMix")->load();
+    const bool svfOn = apvts.getRawParameterValue("svfEnable")->load() > 0.5f;
+    const float svfMix = apvts.getRawParameterValue("svfMix")->load();
+    const float svfCf = apvts.getRawParameterValue("svfCf")->load();
+    const float svfQ = apvts.getRawParameterValue("svfQ")->load();
+    const float svfGainLin = juce::Decibels::decibelsToGain(apvts.getRawParameterValue("svfGainDb")->load());
+
+    const auto* cLo = lowShelfPerChannel[0].coefficients.get();
+    const auto* cM1 = mid1PeakPerChannel[0].coefficients.get();
+    const auto* cM2 = mid2PeakPerChannel[0].coefficients.get();
+    const auto* cHi = highShelfPerChannel[0].coefficients.get();
+
+    int nPart = 4;
+    if (auto* pip = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter("anharmPartials")))
+        nPart = juce::jlimit(2, kAnharmMaxPartials, pip->get());
+
+    for (int i = 0; i < numPoints; ++i)
+    {
+        const double f = juce::jlimit(1.0, nyq, (double) frequenciesHz[i]);
+        C Zeq = iirCoeffComplexAtHz(cLo, f, sr);
+        Zeq *= iirCoeffComplexAtHz(cM1, f, sr);
+        Zeq *= iirCoeffComplexAtHz(cM2, f, sr);
+        Zeq *= iirCoeffComplexAtHz(cHi, f, sr);
+
+        C Z = Zeq;
+        if (svfOn && svfMix > 1.0e-7f)
+        {
+            const C Hbp = svfLinearBandpassTransferHz((double) svfCf, (double) svfQ, sr, f);
+            Z *= (C(1.0, 0.0) + (double) svfMix * (double) svfGainLin * Hbp);
+        }
+
+        if (bankOn && aMix > 1.0e-7f)
+        {
+            C sumHpMinus1(0.0, 0.0);
+            for (int p = 0; p < nPart; ++p)
+            {
+                const auto* cp = anharmPeakPerChannel[0][(size_t) p].coefficients.get();
+                if (cp == nullptr)
+                    continue;
+                sumHpMinus1 += (iirCoeffComplexAtHz(cp, f, sr) - C(1.0, 0.0));
+            }
+            Z *= (C(1.0, 0.0) + (double) aMix * sumHpMinus1);
+        }
+
+        const double mOut = juce::jmax(1.0e-12, std::abs(Z));
+        magnitudesDb[i] = static_cast<float>(juce::Decibels::gainToDecibels(mOut));
     }
 }
 
@@ -500,27 +910,155 @@ void ParaEQ301AudioProcessor::updateFiltersForChannel(int ch, double sampleRate,
     const float m1Lin = juce::Decibels::decibelsToGain(m1GainDb);
     const float m2Lin = juce::Decibels::decibelsToGain(m2GainDb);
     const float hiLin = juce::Decibels::decibelsToGain(hiGainDb);
+    const bool univBell = apvts.getRawParameterValue("univBell")->load() > 0.5f;
     *lowShelfPerChannel[i].coefficients = *Coefficients::makeLowShelf(sampleRate, static_cast<double>(lowCf), kShelfQ, lowLin);
-    *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m1f), q1, m1Lin);
-    *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m2f), q2, m2Lin);
+    if (univBell)
+    {
+        *mid1PeakPerChannel[i].coefficients = *makeOrfanidisPeakCoefficients(sampleRate, static_cast<double>(m1f), (double) q1, (double) m1Lin);
+        *mid2PeakPerChannel[i].coefficients = *makeOrfanidisPeakCoefficients(sampleRate, static_cast<double>(m2f), (double) q2, (double) m2Lin);
+    }
+    else
+    {
+        *mid1PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m1f), q1, m1Lin);
+        *mid2PeakPerChannel[i].coefficients = *Coefficients::makePeakFilter(sampleRate, static_cast<double>(m2f), q2, m2Lin);
+    }
     *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, static_cast<double>(hiCf), kShelfQ, hiLin);
 }
 
-void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void ParaEQ301AudioProcessor::updateRoastShelfFilters(double sampleRate) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(midi);
+    const float preDb = apvts.getRawParameterValue("roastPreEmphDb")->load();
+    const float postDb = apvts.getRawParameterValue("roastPostTiltDb")->load();
+    const float preLin = juce::Decibels::decibelsToGain(preDb);
+    const float postLin = juce::Decibels::decibelsToGain(postDb);
+    for (int ch = 0; ch < maxChannelsPrepared; ++ch)
+    {
+        const size_t i = static_cast<size_t>(ch);
+        *roastPreHighShelf[i].coefficients = *Coefficients::makeHighShelf(sampleRate, 3000.0, kShelfQ, preLin);
+        *roastPostHighShelf[i].coefficients = *Coefficients::makeHighShelf(sampleRate, 5500.0, kShelfQ, postLin);
+    }
+}
 
-    const double sr = getSampleRate() > 0.0 ? getSampleRate() : currentSampleRate;
-    const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
-    const int numSamps = buffer.getNumSamples();
+void ParaEQ301AudioProcessor::updateAnharmonicBank(double sampleRate) noexcept
+{
+    const float f0 = apvts.getRawParameterValue("anharmFundHz")->load();
+    const float B = apvts.getRawParameterValue("anharmInharmB")->load();
+    int nPart = 4;
+    if (auto* pip = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter("anharmPartials")))
+        nPart = juce::jlimit(2, kAnharmMaxPartials, pip->get());
 
-    const float inRms = blockRms(buffer, numCh, numSamps);
+    const float db0 = apvts.getRawParameterValue("anharmPerPartialDb")->load();
+    const float qBase = apvts.getRawParameterValue("anharmQ")->load();
+    const float envToQ = apvts.getRawParameterValue("anharmEnvQ")->load();
 
+    for (int ch = 0; ch < maxChannelsPrepared; ++ch)
+    {
+        const size_t ci = static_cast<size_t>(ch);
+        const float qMod = juce::jlimit(0.55f, 55.f, qBase / (1.f + envToQ * anharmSmoothedDrive[ci] * 7.f));
+
+        for (int p = 0; p < nPart; ++p)
+        {
+            const int n = p + 1;
+            double fn = stiffStringPartialHz((double) f0, n, (double) B);
+            fn = juce::jlimit(1.0, sampleRate * 0.499, fn);
+            const float gDb = db0 - 2.2f * (float) p;
+            const float lin = juce::Decibels::decibelsToGain(gDb);
+            *anharmPeakPerChannel[ci][(size_t) p].coefficients = *Coefficients::makePeakFilter(sampleRate, (float) fn, qMod, lin);
+        }
+    }
+}
+
+void ParaEQ301AudioProcessor::ensureRoastOversampler(int factorExp, int numCh, int numHostSamples)
+{
+    if (factorExp < 1 || factorExp > 2 || numCh < 1 || numHostSamples < 1)
+        return;
+
+    const bool needNew = (!roastOversampler)
+        || preparedRoastOsFactorExp != factorExp
+        || preparedRoastOsChannels != numCh
+        || preparedRoastOsHostSamples != static_cast<size_t>(numHostSamples);
+
+    if (needNew)
+    {
+        roastOversampler = std::make_unique<juce::dsp::Oversampling<float>>(
+            static_cast<size_t>(numCh),
+            static_cast<size_t>(factorExp),
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
+            true,
+            true);
+        roastOversampler->initProcessing(static_cast<size_t>(numHostSamples));
+        roastOversampler->reset();
+        preparedRoastOsFactorExp = factorExp;
+        preparedRoastOsChannels = numCh;
+        preparedRoastOsHostSamples = static_cast<size_t>(numHostSamples);
+    }
+
+    const int lat = roastOversampler != nullptr
+        ? static_cast<int>(std::ceil((double) roastOversampler->getLatencyInSamples()))
+        : 0;
+    if (lat != reportedOsLatencySamples)
+    {
+        reportedOsLatencySamples = lat;
+        setLatencySamples(lat);
+    }
+}
+
+void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float> block, double processSampleRate, int spectrumStride) noexcept
+{
+    const int numCh = juce::jmin((int) block.getNumChannels(), maxChannelsPrepared);
+    const int numSamps = (int) block.getNumSamples();
+    if (numCh <= 0 || numSamps <= 0)
+        return;
+
+    const double sr = processSampleRate > 0.0 ? processSampleRate : 44100.0;
     const bool bypass1 = apvts.getRawParameterValue("core1Bypass")->load() > 0.5f;
     const float coreDrive = bypass1 ? 0.f : apvts.getRawParameterValue("coreSat")->load();
     const bool bypass2 = apvts.getRawParameterValue("core2Bypass")->load() > 0.5f;
     const float core2Drive = bypass2 ? 0.f : apvts.getRawParameterValue("core2Sat")->load();
+    const float coreDirt = apvts.getRawParameterValue("coreDirt")->load();
+    const float coreCrunch = apvts.getRawParameterValue("coreCrunch")->load();
+    const float lifeDepth = apvts.getRawParameterValue("coreLifeDepth")->load();
+    const float lifeHz = apvts.getRawParameterValue("coreLifeHz")->load();
+    const float srF = static_cast<float>(sr);
+    const float lifeInc = kTwoPi * lifeHz / juce::jmax(1.f, srF);
+    const float lifeSwing = lifeDepth * 0.48f;
+
+    const float roastPunchDecayProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.009)));
+    const float roastGlueDecayProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.13)));
+    const float roastDriveEnvCoeffProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.007)));
+    const float coreDcLeakCoeffProc = 1.0f - std::exp(-kTwoPi * 14.0f / juce::jmax(100.f, srF));
+
+    const float roastPunchAmt = apvts.getRawParameterValue("roastPunch")->load();
+    const float roastGlueAmt = apvts.getRawParameterValue("roastGlue")->load();
+    const float roastLoFiAmt = apvts.getRawParameterValue("roastLoFi")->load();
+    const float roastRingAmt = apvts.getRawParameterValue("roastRing")->load();
+    const float roastEnvDriveAmt = apvts.getRawParameterValue("roastEnvDrive")->load();
+    const float roastFlutterAmt = apvts.getRawParameterValue("roastFlutter")->load();
+    const float roastStereoWide = apvts.getRawParameterValue("roastStereoWide")->load();
+    const float roastBoostTrackAmt = apvts.getRawParameterValue("roastBoostTrack")->load();
+    const float roastMidChain = apvts.getRawParameterValue("roastMidChain")->load();
+    const float roastPreDbVal = apvts.getRawParameterValue("roastPreEmphDb")->load();
+    const float roastPostTiltDbVal = apvts.getRawParameterValue("roastPostTiltDb")->load();
+    const bool useRoastPreShelf = roastPreDbVal > 0.02f;
+    const bool useRoastPostShelf = std::abs(roastPostTiltDbVal) > 0.02f;
+    const int roastLoFiDown = 1 + (int) (roastLoFiAmt * 10.0f);
+    const float flutterInc = roastFlutterAmt > 1.0e-6f ? (kTwoPi * 42.f / juce::jmax(1.f, srF)) : 0.f;
+    const float ringInc = kTwoPi * (1.15f + roastRingAmt * 7.5f) / juce::jmax(1.f, srF);
+    const bool linearListen = apvts.getRawParameterValue("linearEqListen")->load() > 0.5f;
+    const float roastLowChainAmt = apvts.getRawParameterValue("roastLowChain")->load();
+    const bool svfOn = apvts.getRawParameterValue("svfEnable")->load() > 0.5f;
+    const float svfMix = apvts.getRawParameterValue("svfMix")->load();
+    const float svfCf = apvts.getRawParameterValue("svfCf")->load();
+    const float svfQ = apvts.getRawParameterValue("svfQ")->load();
+    const float svfDrive = apvts.getRawParameterValue("svfDrive")->load();
+    const float svfGainLin = juce::Decibels::decibelsToGain(apvts.getRawParameterValue("svfGainDb")->load());
+
+    const bool anharmBankOn = apvts.getRawParameterValue("anharmBankEnable")->load() > 0.5f;
+    const float anharmMix = apvts.getRawParameterValue("anharmMix")->load();
+    const float anharmNl = apvts.getRawParameterValue("anharmNl")->load();
+    int nAnharmPartials = 4;
+    if (auto* pip = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter("anharmPartials")))
+        nAnharmPartials = juce::jlimit(2, kAnharmMaxPartials, pip->get());
 
     const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
     const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
@@ -536,7 +1074,6 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float stereoDeg = apvts.getRawParameterValue("lfoStereoPhase")->load();
     const float stereoRad = stereoDeg * kTwoPi / 360.f;
 
-    // Motion off until at least one LFO amount (Gain % / Freq % / Width %) is > 0 — LFO Hz alone does not modulate.
     const bool anyLfo = (dHiG + dHiC + dM1G + dM1C + dM1B + dM2G + dM2C + dM2B + dLoG + dLoC) > 1.0e-6f;
 
     const float rHi = apvts.getRawParameterValue("lfoHiRate")->load() / static_cast<float>(sr);
@@ -556,39 +1093,25 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float baseLoG = apvts.getRawParameterValue("lowGain")->load();
 
     if (!anyLfo)
-    {
         updateFiltersUniform(sr);
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            float* data = buffer.getWritePointer(ch);
-            for (int n = 0; n < numSamps; ++n)
-            {
-                float x = data[n];
-                x = applyCoreSaturation(x, coreDrive);
-                const float beforeEq = x;
-                const size_t i = static_cast<size_t>(ch);
-                x = lowShelfPerChannel[i].processSample(x);
-                x = mid1PeakPerChannel[i].processSample(x);
-                x = mid2PeakPerChannel[i].processSample(x);
-                x = highShelfPerChannel[i].processSample(x);
-                x = applyCoreSaturation(x, core2Drive);
-                if (!std::isfinite(x))
-                    x = 0.0f;
-                data[n] = x;
-                if (ch == 0)
-                    spectrumPushPrePostEq(beforeEq, x);
-            }
-        }
-        publishMotionEqUiSnapshot(baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
-                                  baseM2f, baseM2bw, baseM2g, baseLoCf, baseLoG, false);
-    }
-    else
-    {
-        // Some hosts call processBlock with numChannels==0 (no I/O buffer yet). Motion must still advance
-        // channel-0 coefficients and publish the EQ snapshot or motionEngaged stays false and Peak Hz never tracks.
-        const int coeffChannels = juce::jmax(1, numCh);
+    updateRoastShelfFilters(sr);
 
-        for (int n = 0; n < numSamps; ++n)
+    if (svfOn && !linearListen)
+    {
+        for (int ch = 0; ch < maxChannelsPrepared; ++ch)
+            vaSvfPerChannel[static_cast<size_t>(ch)].setCoeffs(svfCf, svfQ, sr);
+    }
+
+    std::array<float, 4> anharmBlkPeak {};
+    if (anharmBankOn && !linearListen)
+        updateAnharmonicBank(sr);
+
+    const int coeffChannels = juce::jmax(1, numCh);
+    const int specStride = juce::jmax(1, spectrumStride);
+
+    for (int n = 0; n < numSamps; ++n)
+    {
+        if (anyLfo)
         {
             lfoPhase[0] += rHi;
             lfoPhase[1] += rM1;
@@ -599,7 +1122,6 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     ph -= std::floor(ph);
 
             const bool updateCoeffs = (n % kCoeffUpdateInterval) == 0;
-
             if (updateCoeffs)
             {
                 for (int ch = 0; ch < coeffChannels; ++ch)
@@ -626,29 +1148,219 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                         publishMotionEqUiSnapshot(hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
                 }
             }
+        }
 
+        if (linearListen)
+        {
             for (int ch = 0; ch < numCh; ++ch)
             {
-                float* data = buffer.getWritePointer(ch);
+                float* data = block.getChannelPointer((size_t) ch);
                 float x = data[n];
-                x = applyCoreSaturation(x, coreDrive);
                 const float beforeEq = x;
                 const size_t i = static_cast<size_t>(ch);
                 x = lowShelfPerChannel[i].processSample(x);
                 x = mid1PeakPerChannel[i].processSample(x);
                 x = mid2PeakPerChannel[i].processSample(x);
                 x = highShelfPerChannel[i].processSample(x);
-                x = applyCoreSaturation(x, core2Drive);
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
-                if (ch == 0)
+                if (ch == 0 && (n % specStride) == 0)
                     spectrumPushPrePostEq(beforeEq, x);
             }
+            continue;
+        }
+
+        float sumBoostDb = 0.f;
+        if (motionUiEngaged.load(std::memory_order_relaxed) != 0)
+        {
+            const float hg = motionUiHiGainDb.load(std::memory_order_relaxed);
+            const float g1 = motionUiM1GainDb.load(std::memory_order_relaxed);
+            const float g2 = motionUiM2GainDb.load(std::memory_order_relaxed);
+            const float lg = motionUiLoGainDb.load(std::memory_order_relaxed);
+            if (hg > 0.f) sumBoostDb += hg;
+            if (g1 > 0.f) sumBoostDb += g1;
+            if (g2 > 0.f) sumBoostDb += g2;
+            if (lg > 0.f) sumBoostDb += lg;
+        }
+        else
+        {
+            if (baseHiG > 0.f) sumBoostDb += baseHiG;
+            if (baseM1g > 0.f) sumBoostDb += baseM1g;
+            if (baseM2g > 0.f) sumBoostDb += baseM2g;
+            if (baseLoG > 0.f) sumBoostDb += baseLoG;
+        }
+        const float trackMul = 1.f + roastBoostTrackAmt * juce::jmin(1.f, sumBoostDb / 26.f) * 0.62f;
+
+        coreLifePhase += lifeInc;
+        if (coreLifePhase >= kTwoPi)
+            coreLifePhase -= kTwoPi * std::floor(coreLifePhase / kTwoPi);
+
+        roastFlutterPhase += flutterInc;
+        if (roastFlutterPhase >= kTwoPi)
+            roastFlutterPhase -= kTwoPi * std::floor(roastFlutterPhase / kTwoPi);
+
+        roastRingPhase += ringInc;
+        if (roastRingPhase >= kTwoPi)
+            roastRingPhase -= kTwoPi * std::floor(roastRingPhase / kTwoPi);
+
+        const float flutterMul = 1.f + roastFlutterAmt * 0.055f * std::sin(roastFlutterPhase);
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* data = block.getChannelPointer((size_t) ch);
+            float x = data[n];
+            const size_t i = static_cast<size_t>(ch);
+
+            x = applyRoastPunch(x, roastPunchAmt, roastPunchEnv[i], roastPunchDecayProc);
+            if (useRoastPreShelf)
+                x = roastPreHighShelf[i].processSample(x);
+
+            const float xPreSat = x;
+
+            const float stereoWideRad = roastStereoWide * 1.55f * ((numCh > 1 && ch == 1) ? 1.f : 0.f);
+            const float phLife = coreLifePhase + stereoWideRad;
+            const float mPre = 1.0f + lifeSwing * std::sin(phLife);
+            const float mPost = 1.0f + lifeSwing * std::sin(phLife + 2.17f);
+
+            const float envMul = 1.f + roastEnvDriveAmt * juce::jmin(2.2f, roastDriveEnv[i] * 5.0f);
+            float effPre = bypass1 ? 0.0f : juce::jlimit(0.0f, 1.0f, coreDrive * mPre * trackMul * flutterMul * envMul);
+            float effPost = bypass2 ? 0.0f : juce::jlimit(0.0f, 1.0f, core2Drive * mPost * trackMul * flutterMul * envMul);
+
+            x = applyCoreSaturation(x, effPre, coreDirt, coreCrunch, coreDcPre[i], coreDcLeakCoeffProc);
+            const float beforeEq = x;
+            x = lowShelfPerChannel[i].processSample(x);
+            if (roastLowChainAmt > 1.0e-6f)
+            {
+                const float effLow = juce::jlimit(0.0f, 1.0f, roastLowChainAmt * juce::jmax(effPre, effPost));
+                x = applyCoreSaturation(x, effLow, coreDirt, coreCrunch, coreDcLow[i], coreDcLeakCoeffProc);
+            }
+            x = mid1PeakPerChannel[i].processSample(x);
+            if (roastMidChain > 1.0e-6f)
+            {
+                const float effMid = juce::jlimit(0.0f, 1.0f, roastMidChain * juce::jmax(effPre, effPost));
+                x = applyCoreSaturation(x, effMid, coreDirt, coreCrunch, coreDcMid[i], coreDcLeakCoeffProc);
+            }
+            x = mid2PeakPerChannel[i].processSample(x);
+            x = highShelfPerChannel[i].processSample(x);
+            if (svfOn && !linearListen && svfMix > 1.0e-7f)
+            {
+                const float bp = vaSvfPerChannel[i].processBandpassNonlinear(x, svfDrive);
+                x = x + svfMix * (svfGainLin * bp);
+            }
+            if (anharmBankOn && anharmMix > 1.0e-7f)
+            {
+                anharmBlkPeak[i] = juce::jmax(anharmBlkPeak[i], std::abs(x));
+                float delta = 0.f;
+                for (int p = 0; p < nAnharmPartials; ++p)
+                {
+                    const float yp = anharmPeakPerChannel[i][(size_t) p].processSample(x);
+                    delta += (yp - x);
+                }
+                float wet = anharmMix * delta;
+                if (anharmNl > 1.0e-6f)
+                {
+                    const float t = 1.f + anharmNl * 5.f;
+                    wet = std::tanh(t * wet) / t;
+                }
+                x += wet;
+            }
+            x = applyCoreSaturation(x, effPost, coreDirt, coreCrunch, coreDcPost[i], coreDcLeakCoeffProc);
+            if (useRoastPostShelf)
+                x = roastPostHighShelf[i].processSample(x);
+            x = applyRoastLoFi(x, roastLoFiAmt, roastLoFiCounter[i], roastLoFiHold[i], roastLoFiDown);
+            x = applyRoastGlue(x, roastGlueAmt, roastGlueEnv[i], roastGlueDecayProc);
+            x *= 1.f + roastRingAmt * 0.38f * std::sin(roastRingPhase + (float) ch * 0.7f);
+            if (!std::isfinite(x))
+                x = 0.0f;
+            data[n] = x;
+            if (ch == 0 && (n % specStride) == 0)
+                spectrumPushPrePostEq(beforeEq, x);
+
+            const float ax = std::abs(xPreSat);
+            roastDriveEnv[i] = roastDriveEnv[i] * roastDriveEnvCoeffProc + ax * (1.f - roastDriveEnvCoeffProc);
+            roastDriveEnv[i] = juce::jmin(1.f, roastDriveEnv[i]);
         }
     }
 
+    if (!linearListen)
+    {
+        for (size_t ci = 0; ci < anharmSmoothedDrive.size(); ++ci)
+        {
+            const float pk = anharmBankOn ? anharmBlkPeak[ci] : 0.f;
+            anharmSmoothedDrive[ci] = anharmSmoothedDrive[ci] * roastDriveEnvCoeffProc + pk * (1.f - roastDriveEnvCoeffProc);
+            anharmSmoothedDrive[ci] = juce::jmin(1.f, anharmSmoothedDrive[ci]);
+        }
+    }
+
+    if (!anyLfo)
+        publishMotionEqUiSnapshot(baseHiCf, baseHiG, baseM1f, baseM1bw, baseM1g,
+                                  baseM2f, baseM2bw, baseM2g, baseLoCf, baseLoG, false);
+
+    const float trimLin = juce::Decibels::decibelsToGain(apvts.getRawParameterValue("roastOutputTrimDb")->load());
+    if (std::abs(trimLin - 1.f) > 1.0e-5f)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
+            juce::FloatVectorOperations::multiply(block.getChannelPointer((size_t) ch), trimLin, numSamps);
+    }
+
+    lastEqCurveEvalRate = sr;
     publishEqCurveMagnitudeSnapshot();
+}
+
+void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+    juce::ignoreUnused(midi);
+
+    const double srHost = getSampleRate() > 0.0 ? getSampleRate() : currentSampleRate;
+    const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
+    const int numSamps = buffer.getNumSamples();
+
+    const float inRms = blockRms(buffer, numCh, numSamps);
+
+    int osIdx = 0;
+    if (auto* p = apvts.getParameter("oversample"))
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(p))
+            osIdx = c->getIndex();
+
+    const bool linearEq = apvts.getRawParameterValue("linearEqListen")->load() > 0.5f;
+    const int osExp = (linearEq || osIdx <= 0) ? 0 : osIdx;
+
+    juce::dsp::AudioBlock<float> fullBlock(buffer);
+    auto work = fullBlock.getSubsetChannelBlock(0, static_cast<size_t>(numCh));
+
+    if (osExp > 0 && numSamps > 0)
+    {
+        ensureRoastOversampler(osExp, numCh, numSamps);
+        if (roastOversampler != nullptr)
+        {
+            auto osAudio = roastOversampler->processSamplesUp(work);
+            const double srOs = srHost * (double) roastOversampler->getOversamplingFactor();
+            processRoastAndEqBlock(osAudio, srOs, (int) roastOversampler->getOversamplingFactor());
+            roastOversampler->processSamplesDown(work);
+        }
+        else
+        {
+            processRoastAndEqBlock(work, srHost, 1);
+        }
+    }
+    else
+    {
+        if (roastOversampler != nullptr)
+        {
+            roastOversampler.reset();
+            preparedRoastOsFactorExp = 0;
+            preparedRoastOsChannels = 0;
+            preparedRoastOsHostSamples = 0;
+        }
+        if (reportedOsLatencySamples != 0)
+        {
+            reportedOsLatencySamples = 0;
+            setLatencySamples(0);
+        }
+        processRoastAndEqBlock(work, srHost, 1);
+    }
 
     const bool limOn = apvts.getRawParameterValue("outLimOn")->load() > 0.5f;
     if (limOn)
@@ -656,7 +1368,6 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         const float limThreshDb = apvts.getRawParameterValue("outLimThresh")->load();
         outputLimiter.setThreshold(limThreshDb);
         outputLimiter.setRelease(apvts.getRawParameterValue("outLimRelease")->load());
-        juce::dsp::AudioBlock<float> fullBlock(buffer);
         auto chBlock = fullBlock.getSubsetChannelBlock(0, static_cast<size_t>(numCh));
         auto region = chBlock.getSubBlock(0, static_cast<size_t>(numSamps));
         juce::dsp::ProcessContextReplacing<float> ctx(region);
@@ -779,6 +1490,345 @@ bool ParaEQ301AudioProcessor::getSpectrumBeforeAfterDb(double sampleRate, const 
         }
     }
     return true;
+}
+
+namespace
+{
+    void apvtsSetFloatPlain(juce::AudioProcessorValueTreeState& ap, const char* id, float plainValue)
+    {
+        if (auto* p = ap.getParameter(id))
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*>(p))
+                p->setValueNotifyingHost(rp->convertTo0to1(plainValue));
+    }
+
+    void apvtsSetBool01(juce::AudioProcessorValueTreeState& ap, const char* id, bool v)
+    {
+        if (auto* p = ap.getParameter(id))
+            p->setValueNotifyingHost(v ? 1.f : 0.f);
+    }
+
+    void apvtsSetIntPlain(juce::AudioProcessorValueTreeState& ap, const char* id, int v)
+    {
+        if (auto* p = dynamic_cast<juce::AudioParameterInt*>(ap.getParameter(id)))
+            p->setValueNotifyingHost(p->convertTo0to1(v));
+    }
+}
+
+void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
+{
+    index = juce::jlimit(0, kNumFactoryPrograms - 1, index);
+    auto& ap = apvts;
+
+    auto zeroRoast = [&]()
+    {
+        apvtsSetFloatPlain(ap, "coreCrunch", 0.f);
+        apvtsSetFloatPlain(ap, "roastPreEmphDb", 0.f);
+        apvtsSetFloatPlain(ap, "roastPostTiltDb", 0.f);
+        apvtsSetFloatPlain(ap, "roastBoostTrack", 0.f);
+        apvtsSetFloatPlain(ap, "roastMidChain", 0.f);
+        apvtsSetFloatPlain(ap, "roastLowChain", 0.f);
+        apvtsSetFloatPlain(ap, "roastPunch", 0.f);
+        apvtsSetFloatPlain(ap, "roastGlue", 0.f);
+        apvtsSetFloatPlain(ap, "roastLoFi", 0.f);
+        apvtsSetFloatPlain(ap, "roastRing", 0.f);
+        apvtsSetFloatPlain(ap, "roastEnvDrive", 0.f);
+        apvtsSetFloatPlain(ap, "roastFlutter", 0.f);
+        apvtsSetFloatPlain(ap, "roastStereoWide", 0.f);
+        apvtsSetFloatPlain(ap, "roastOutputTrimDb", 0.f);
+        apvtsSetFloatPlain(ap, "coreDirt", 0.28f);
+        apvtsSetFloatPlain(ap, "coreLifeDepth", 0.f);
+        apvtsSetFloatPlain(ap, "coreLifeHz", 0.22f);
+        apvtsSetBool01(ap, "svfEnable", false);
+        apvtsSetFloatPlain(ap, "svfMix", 0.f);
+        apvtsSetFloatPlain(ap, "svfCf", 950.f);
+        apvtsSetFloatPlain(ap, "svfQ", 4.5f);
+        apvtsSetFloatPlain(ap, "svfDrive", 0.22f);
+        apvtsSetFloatPlain(ap, "svfGainDb", 0.f);
+        apvtsSetBool01(ap, "univBell", false);
+        apvtsSetBool01(ap, "anharmBankEnable", false);
+        apvtsSetFloatPlain(ap, "anharmMix", 0.f);
+        apvtsSetFloatPlain(ap, "anharmNl", 0.f);
+        apvtsSetFloatPlain(ap, "anharmEnvQ", 0.35f);
+    };
+
+    auto flatEq = [&]()
+    {
+        apvtsSetFloatPlain(ap, "hiCf", 5000.f);
+        apvtsSetFloatPlain(ap, "hiGain", 0.f);
+        apvtsSetFloatPlain(ap, "mid1Cf", 1000.f);
+        apvtsSetFloatPlain(ap, "mid1Bw", 400.f);
+        apvtsSetFloatPlain(ap, "mid1Gain", 0.f);
+        apvtsSetFloatPlain(ap, "mid2Cf", 2500.f);
+        apvtsSetFloatPlain(ap, "mid2Bw", 400.f);
+        apvtsSetFloatPlain(ap, "mid2Gain", 0.f);
+        apvtsSetFloatPlain(ap, "lowCf", 120.f);
+        apvtsSetFloatPlain(ap, "lowGain", 0.f);
+    };
+
+    auto motionOff = [&]()
+    {
+        apvtsSetFloatPlain(ap, "lfoHiDepthGain", 0.f);
+        apvtsSetFloatPlain(ap, "lfoHiDepthCf", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM1DepthGain", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM1DepthCf", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM1DepthBw", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM2DepthGain", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM2DepthCf", 0.f);
+        apvtsSetFloatPlain(ap, "lfoM2DepthBw", 0.f);
+        apvtsSetFloatPlain(ap, "lfoLoDepthGain", 0.f);
+        apvtsSetFloatPlain(ap, "lfoLoDepthCf", 0.f);
+    };
+
+    switch (index)
+    {
+        case 0:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", true);
+            apvtsSetFloatPlain(ap, "coreSat", 0.f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.f);
+            zeroRoast();
+            flatEq();
+            motionOff();
+            break;
+        case 1:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            apvtsSetFloatPlain(ap, "coreSat", 0.48f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.38f);
+            apvtsSetFloatPlain(ap, "coreCrunch", 0.24f);
+            apvtsSetFloatPlain(ap, "coreDirt", 0.42f);
+            apvtsSetFloatPlain(ap, "roastPreEmphDb", 4.5f);
+            apvtsSetFloatPlain(ap, "roastPostTiltDb", -1.5f);
+            apvtsSetFloatPlain(ap, "roastBoostTrack", 0.45f);
+            apvtsSetFloatPlain(ap, "roastMidChain", 0.22f);
+            apvtsSetFloatPlain(ap, "roastLowChain", 0.12f);
+            apvtsSetFloatPlain(ap, "roastPunch", 0.22f);
+            apvtsSetFloatPlain(ap, "roastGlue", 0.18f);
+            apvtsSetFloatPlain(ap, "roastLoFi", 0.f);
+            apvtsSetFloatPlain(ap, "roastRing", 0.08f);
+            apvtsSetFloatPlain(ap, "roastEnvDrive", 0.25f);
+            apvtsSetFloatPlain(ap, "roastFlutter", 0.12f);
+            apvtsSetFloatPlain(ap, "roastStereoWide", 0.35f);
+            apvtsSetFloatPlain(ap, "roastOutputTrimDb", -1.5f);
+            apvtsSetBool01(ap, "svfEnable", true);
+            apvtsSetFloatPlain(ap, "svfMix", 0.18f);
+            apvtsSetFloatPlain(ap, "svfCf", 1100.f);
+            apvtsSetFloatPlain(ap, "svfQ", 7.f);
+            apvtsSetFloatPlain(ap, "svfDrive", 0.28f);
+            apvtsSetFloatPlain(ap, "svfGainDb", 2.5f);
+            flatEq();
+            motionOff();
+            break;
+        case 2:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            apvtsSetFloatPlain(ap, "coreSat", 0.28f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.5f);
+            apvtsSetFloatPlain(ap, "coreCrunch", 0.15f);
+            apvtsSetFloatPlain(ap, "roastLoFi", 0.62f);
+            apvtsSetFloatPlain(ap, "roastGlue", 0.35f);
+            apvtsSetFloatPlain(ap, "roastRing", 0.18f);
+            apvtsSetFloatPlain(ap, "roastPostTiltDb", 2.f);
+            apvtsSetFloatPlain(ap, "roastBoostTrack", 0.f);
+            apvtsSetFloatPlain(ap, "roastMidChain", 0.f);
+            apvtsSetFloatPlain(ap, "roastLowChain", 0.f);
+            apvtsSetFloatPlain(ap, "roastPunch", 0.f);
+            apvtsSetFloatPlain(ap, "roastPreEmphDb", 2.f);
+            apvtsSetFloatPlain(ap, "roastEnvDrive", 0.f);
+            apvtsSetFloatPlain(ap, "roastFlutter", 0.f);
+            apvtsSetFloatPlain(ap, "roastStereoWide", 0.f);
+            apvtsSetFloatPlain(ap, "roastOutputTrimDb", -2.f);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            flatEq();
+            motionOff();
+            break;
+        case 3:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.32f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.28f);
+            apvtsSetFloatPlain(ap, "lfoHiRate", 0.35f);
+            apvtsSetFloatPlain(ap, "lfoM1Rate", 0.28f);
+            apvtsSetFloatPlain(ap, "lfoHiDepthGain", 0.55f);
+            apvtsSetFloatPlain(ap, "lfoM1DepthCf", 0.45f);
+            apvtsSetFloatPlain(ap, "lfoM2DepthGain", 0.35f);
+            apvtsSetFloatPlain(ap, "roastBoostTrack", 0.5f);
+            apvtsSetFloatPlain(ap, "coreLifeDepth", 0.35f);
+            apvtsSetFloatPlain(ap, "coreLifeHz", 0.18f);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            flatEq();
+            break;
+        case 4:
+            apvtsSetBool01(ap, "linearEqListen", true);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            zeroRoast();
+            apvtsSetBool01(ap, "core1Bypass", true);
+            apvtsSetBool01(ap, "core2Bypass", true);
+            apvtsSetFloatPlain(ap, "coreSat", 0.f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.f);
+            flatEq();
+            motionOff();
+            break;
+        case 5:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreDirt", 0.42f);
+            apvtsSetFloatPlain(ap, "coreSat", 0.38f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.32f);
+            apvtsSetFloatPlain(ap, "roastMidChain", 0.48f);
+            apvtsSetFloatPlain(ap, "roastLowChain", 0.28f);
+            apvtsSetFloatPlain(ap, "roastBoostTrack", 0.55f);
+            apvtsSetFloatPlain(ap, "roastPunch", 0.12f);
+            apvtsSetFloatPlain(ap, "mid1Gain", 6.5f);
+            apvtsSetFloatPlain(ap, "mid2Gain", 4.5f);
+            apvtsSetFloatPlain(ap, "mid1Cf", 900.f);
+            apvtsSetFloatPlain(ap, "mid2Cf", 2800.f);
+            apvtsSetFloatPlain(ap, "hiGain", 1.5f);
+            apvtsSetFloatPlain(ap, "lowGain", 0.f);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            motionOff();
+            break;
+        case 6:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", true);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.12f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.f);
+            apvtsSetBool01(ap, "univBell", true);
+            apvtsSetBool01(ap, "anharmBankEnable", false);
+            apvtsSetFloatPlain(ap, "anharmMix", 0.f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Cf", 1200.f);
+            apvtsSetFloatPlain(ap, "mid1Bw", 320.f);
+            apvtsSetFloatPlain(ap, "mid1Gain", 5.5f);
+            apvtsSetFloatPlain(ap, "mid2Cf", 3200.f);
+            apvtsSetFloatPlain(ap, "mid2Bw", 500.f);
+            apvtsSetFloatPlain(ap, "mid2Gain", 2.5f);
+            apvtsSetFloatPlain(ap, "lowGain", 1.f);
+            apvtsSetFloatPlain(ap, "hiGain", 0.5f);
+            motionOff();
+            break;
+        case 7:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.22f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.18f);
+            apvtsSetBool01(ap, "univBell", false);
+            apvtsSetBool01(ap, "anharmBankEnable", true);
+            apvtsSetFloatPlain(ap, "anharmFundHz", 240.f);
+            apvtsSetFloatPlain(ap, "anharmInharmB", 0.00012f);
+            apvtsSetIntPlain(ap, "anharmPartials", 5);
+            apvtsSetFloatPlain(ap, "anharmMix", 0.42f);
+            apvtsSetFloatPlain(ap, "anharmPerPartialDb", -1.5f);
+            apvtsSetFloatPlain(ap, "anharmQ", 22.f);
+            apvtsSetFloatPlain(ap, "anharmNl", 0.14f);
+            apvtsSetFloatPlain(ap, "anharmEnvQ", 0.45f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Gain", 1.5f);
+            apvtsSetFloatPlain(ap, "hiGain", -0.5f);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            motionOff();
+            break;
+        case 8:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.2f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.15f);
+            apvtsSetBool01(ap, "univBell", true);
+            apvtsSetBool01(ap, "anharmBankEnable", true);
+            apvtsSetFloatPlain(ap, "anharmFundHz", 180.f);
+            apvtsSetFloatPlain(ap, "anharmInharmB", 0.00035f);
+            apvtsSetIntPlain(ap, "anharmPartials", 6);
+            apvtsSetFloatPlain(ap, "anharmMix", 0.38f);
+            apvtsSetFloatPlain(ap, "anharmPerPartialDb", 0.5f);
+            apvtsSetFloatPlain(ap, "anharmQ", 18.f);
+            apvtsSetFloatPlain(ap, "anharmNl", 0.22f);
+            apvtsSetFloatPlain(ap, "anharmEnvQ", 0.5f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Cf", 700.f);
+            apvtsSetFloatPlain(ap, "mid1Bw", 280.f);
+            apvtsSetFloatPlain(ap, "mid1Gain", 3.f);
+            apvtsSetFloatPlain(ap, "mid2Cf", 2400.f);
+            apvtsSetFloatPlain(ap, "mid2Gain", 2.f);
+            apvtsSetFloatPlain(ap, "lowGain", 2.f);
+            apvtsSetBool01(ap, "svfEnable", false);
+            apvtsSetFloatPlain(ap, "svfMix", 0.f);
+            motionOff();
+            break;
+        case 9:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.26f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.2f);
+            apvtsSetBool01(ap, "univBell", false);
+            apvtsSetBool01(ap, "anharmBankEnable", true);
+            apvtsSetFloatPlain(ap, "anharmFundHz", 320.f);
+            apvtsSetFloatPlain(ap, "anharmInharmB", 0.0002f);
+            apvtsSetIntPlain(ap, "anharmPartials", 4);
+            apvtsSetFloatPlain(ap, "anharmMix", 0.35f);
+            apvtsSetFloatPlain(ap, "anharmPerPartialDb", -0.5f);
+            apvtsSetFloatPlain(ap, "anharmQ", 26.f);
+            apvtsSetFloatPlain(ap, "anharmNl", 0.18f);
+            apvtsSetFloatPlain(ap, "anharmEnvQ", 0.4f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Gain", 2.f);
+            apvtsSetBool01(ap, "svfEnable", true);
+            apvtsSetFloatPlain(ap, "svfMix", 0.22f);
+            apvtsSetFloatPlain(ap, "svfCf", 1250.f);
+            apvtsSetFloatPlain(ap, "svfQ", 6.5f);
+            apvtsSetFloatPlain(ap, "svfDrive", 0.26f);
+            apvtsSetFloatPlain(ap, "svfGainDb", 3.f);
+            motionOff();
+            break;
+        default:
+            break;
+    }
+}
+
+void ParaEQ301AudioProcessor::setCurrentProgram(int index)
+{
+    const int n = juce::jlimit(0, kNumFactoryPrograms - 1, index);
+    if (n == currentFactoryProgram)
+        return;
+    currentFactoryProgram = n;
+    applyFactoryPreset(n);
+}
+
+const juce::String ParaEQ301AudioProcessor::getProgramName(int index)
+{
+    switch (juce::jlimit(0, kNumFactoryPrograms - 1, index))
+    {
+        case 0: return "Init";
+        case 1: return "Roast forward";
+        case 2: return "Lo-fi crush";
+        case 3: return "Motion bake";
+        case 4: return "Linear EQ only";
+        case 5: return "Mids cooked";
+        case 6: return "Univ bell lift";
+        case 7: return "Anharm shell";
+        case 8: return "Bell + partials";
+        case 9: return "Anharm + SVF";
+        default: return {};
+    }
 }
 
 void ParaEQ301AudioProcessor::getStateInformation(juce::MemoryBlock& destData)

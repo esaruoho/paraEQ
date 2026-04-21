@@ -1,8 +1,11 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "VaNonlinearSvf.h"
+#include "ParametricEqDesign.h"
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 class ParaEQ301AudioProcessor : public juce::AudioProcessor
 {
@@ -25,10 +28,12 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return {}; }
+    static constexpr int kNumFactoryPrograms = 10;
+
+    int getNumPrograms() override { return kNumFactoryPrograms; }
+    int getCurrentProgram() override { return currentFactoryProgram; }
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
 
     void getStateInformation(juce::MemoryBlock& destData) override;
@@ -43,6 +48,10 @@ public:
     /** Combined linear IIR chain magnitude (low shelf -> mid peaks -> high shelf), channel 0 coeffs. dB = 20·log10|H|.
         Frequencies are in Hz; magnitudes are evaluated at currentSampleRate (must match coefficient design). sampleRate arg ignored. */
     void getEqChainMagnitudeDb(double sampleRate, const double* frequenciesHz, float* magnitudesDb, int numPoints) const noexcept;
+
+    /** Linear small-signal model after the 4-band EQ: complex H_eq · (1 + svfMix·g·H_bp) · (1 + aMix·Σ(H_p−1)) when enabled.
+        H_bp matches VaNonlinearSvfChannel at drive 0. Omits SVF / bank nonlinearities and roast path. */
+    void getEqChainPlusAnharmLinearDb(double sampleRate, const double* frequenciesHz, float* magnitudesDb, int numPoints) const noexcept;
 
     /** Per-band LFO phase 0–1 for Motion tab UI (Hi, M1, M2, Lo). Audio thread writes; GUI reads. */
     void getMotionLfoPhases(float* outFour) const noexcept;
@@ -68,6 +77,7 @@ public:
 
     /** Must match EQ / Curve tab log-spaced plot point count (PluginEditor.cpp nPts). */
     static constexpr int kEqCurvePlotPoints = 220;
+    static constexpr int kAnharmMaxPartials = 6;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -79,6 +89,15 @@ private:
                                  float m1f, float m1bw, float m1GainDb,
                                  float m2f, float m2bw, float m2GainDb,
                                  float hiCf, float hiGainDb) noexcept;
+
+    void updateRoastShelfFilters(double sampleRate) noexcept;
+    void updateAnharmonicBank(double sampleRate) noexcept;
+
+    /** Half-band up/down around the roast + EQ path (cores, SVF, lo-fi, etc.). factorExp 1 = 2×, 2 = 4×. */
+    void ensureRoastOversampler(int factorExp, int numCh, int numHostSamples);
+    void processRoastAndEqBlock(juce::dsp::AudioBlock<float> block, double processSampleRate, int spectrumStride) noexcept;
+
+    void applyFactoryPreset(int index);
 
     void publishMotionEqUiSnapshot(float hiCf, float hiGainDb,
                                    float m1f, float m1bw, float m1GainDb,
@@ -96,7 +115,22 @@ private:
     std::array<IIRFilter, 4> mid2PeakPerChannel;
     std::array<IIRFilter, 4> highShelfPerChannel;
 
+    std::array<IIRFilter, 4> roastPreHighShelf;
+    std::array<IIRFilter, 4> roastPostHighShelf;
+
+    std::array<std::array<IIRFilter, kAnharmMaxPartials>, 4> anharmPeakPerChannel;
+    std::array<float, 4> anharmSmoothedDrive { {} };
+
+    std::array<VaNonlinearSvfChannel, 4> vaSvfPerChannel;
+
     juce::dsp::Limiter<float> outputLimiter;
+
+    std::unique_ptr<juce::dsp::Oversampling<float>> roastOversampler;
+    int preparedRoastOsFactorExp = 0;
+    int preparedRoastOsChannels = 0;
+    size_t preparedRoastOsHostSamples = 0;
+    int reportedOsLatencySamples = 0;
+    double lastEqCurveEvalRate = 44100.0;
 
     int maxChannelsPrepared = 0;
     double currentSampleRate = 44100.0;
@@ -135,6 +169,27 @@ private:
     double eqCurveFreqHz[kEqCurvePlotPoints] {};
     float eqCurveMagPublished[kEqCurvePlotPoints] {};
     mutable std::atomic<std::uint32_t> eqCurveMagSeq { 0 };
+
+    /** Leaky-integrator DC estimate per channel, pre/post core sat (asymmetric dirt can shift DC). */
+    std::array<float, 4> coreDcPre { {} };
+    std::array<float, 4> coreDcPost { {} };
+    float coreDcLeakCoeff = 0.f;
+    float coreLifePhase = 0.f;
+
+    std::array<float, 4> coreDcMid { {} };
+    std::array<float, 4> coreDcLow { {} };
+    std::array<float, 4> roastPunchEnv { {} };
+    std::array<float, 4> roastGlueEnv { {} };
+    std::array<float, 4> roastDriveEnv { {} };
+    std::array<int, 4> roastLoFiCounter { {} };
+    std::array<float, 4> roastLoFiHold { {} };
+    float roastFlutterPhase = 0.f;
+    float roastRingPhase = 0.f;
+    float roastPunchDecay = 0.f;
+    float roastGlueDecay = 0.f;
+    float roastDriveEnvCoeff = 0.f;
+
+    int currentFactoryProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessor)
 };

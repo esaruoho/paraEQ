@@ -378,7 +378,8 @@ namespace
 
     /** Fixed dB window (0 dB vertical centre = flat / unity gain). Optional coloured markers at Lo/M1/M2/Hi centre Hz.
         freqAxisInsetLeftPx / RightPx: horizontal space reserved for ±dB labels. Use 0,0 when stacking under a spectrum
-        that uses the full width for log-Hz (e.g. Curve + Motion tab) so 100 / 1k / 10k grid lines line up. */
+        that uses the full width for log-Hz (e.g. Curve + Motion tab) so 100 / 1k / 10k grid lines line up.
+        drawDecorations: set false to stroke only the magnitude path (reuse same graph after drawing chrome once). */
     void paintEqMagnitudeCurveInRect(juce::Graphics& g,
                                      juce::Rectangle<int> graphOuter,
                                      const std::vector<double>& freqHz,
@@ -393,7 +394,8 @@ namespace
                                      juce::Colour curveStrokeColour,
                                      bool drawRoundedBackground,
                                      int freqAxisInsetLeftPx = 54,
-                                     int freqAxisInsetRightPx = 44)
+                                     int freqAxisInsetRightPx = 44,
+                                     bool drawDecorations = true)
     {
         if (graphOuter.getHeight() < 22 || nPts < 2)
             return;
@@ -416,12 +418,121 @@ namespace
             curve = band;
         }
 
-        if (drawRoundedBackground)
+        if (drawDecorations)
         {
-            g.setColour(juce::Colour(0xff1a1a1a));
-            g.fillRoundedRectangle(graphOuter.toFloat(), 3.f);
-            g.setColour(juce::Colour(0xff333333));
-            g.drawRoundedRectangle(graphOuter.toFloat(), 3.f, 1.f);
+            if (drawRoundedBackground)
+            {
+                g.setColour(juce::Colour(0xff1a1a1a));
+                g.fillRoundedRectangle(graphOuter.toFloat(), 3.f);
+                g.setColour(juce::Colour(0xff333333));
+                g.drawRoundedRectangle(graphOuter.toFloat(), 3.f, 1.f);
+            }
+
+            auto xOfFDec = [&](double f) -> float
+            {
+                f = juce::jlimit(fLo, fHi, f);
+                const double lf = std::log(f);
+                return (float) (curve.getX() + (lf - logLo) / (logHi - logLo) * (double) curve.getWidth());
+            };
+
+            auto yOfDbDec = [&](float db) -> float
+            {
+                const float n = juce::jlimit(dMin, dMax, db);
+                const float norm = (n - dMin) / (dMax - dMin);
+                return (float) curve.getBottom() - norm * (float) curve.getHeight();
+            };
+
+            for (float db : { -27.f, -24.f, -18.f, -12.f, -9.f, -6.f, -3.f, 3.f, 6.f, 9.f, 12.f, 18.f, 24.f, 27.f })
+            {
+                if (db <= dMin + 0.001f || db >= dMax - 0.001f || std::abs((double) db) < 0.01)
+                    continue;
+                const float y = yOfDbDec(db);
+                g.setColour(juce::Colour(0xff2a2a2a));
+                g.drawHorizontalLine(juce::roundToInt(y), (float) curve.getX(), (float) curve.getRight());
+            }
+
+            g.setColour(kTextMuted);
+            g.setFont(8.5f);
+            for (double hz : { 100.0, 1000.0, 10000.0 })
+            {
+                if (hz < fLo || hz > fHi)
+                    continue;
+                const float x = xOfFDec(hz);
+                g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY(), (float) curve.getBottom());
+                const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
+                g.drawText(lab, juce::roundToInt(x) - 11, curve.getBottom() + 1, 22, 9, juce::Justification::centred);
+            }
+
+            if (apMarkers != nullptr)
+            {
+                struct BandTag
+                {
+                    const char* paramId;
+                    const char* tag;
+                    juce::Colour col;
+                };
+                const BandTag tags[] = { { "lowCf", "Lo", juce::Colour(0xff5dade2) },
+                                         { "mid1Cf", "M1", juce::Colour(0xfff5b041) },
+                                         { "mid2Cf", "M2", juce::Colour(0xffaf7ac5) },
+                                         { "hiCf", "Hi", juce::Colour(0xff7ecbff) } };
+                for (const auto& t : tags)
+                {
+                    float hz = apMarkers->getRawParameterValue(t.paramId)->load();
+                    if (motionSnap != nullptr && motionSnap->motionEngaged
+                        && cfMotionDepthForMarker(*apMarkers, t.paramId) > 1.0e-6f)
+                    {
+                        if (std::strcmp(t.paramId, "lowCf") == 0)
+                            hz = motionSnap->loCfHz;
+                        else if (std::strcmp(t.paramId, "mid1Cf") == 0)
+                            hz = motionSnap->mid1CfHz;
+                        else if (std::strcmp(t.paramId, "mid2Cf") == 0)
+                            hz = motionSnap->mid2CfHz;
+                        else if (std::strcmp(t.paramId, "hiCf") == 0)
+                            hz = motionSnap->hiCfHz;
+                    }
+                    if (hz < (float) fLo || hz > (float) fHi)
+                        continue;
+                    const float x = xOfFDec(static_cast<double>(hz));
+                    g.setColour(t.col.withAlpha(0.38f));
+                    g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY() + 13, (float) curve.getBottom());
+                    g.setFont(8.2f);
+                    g.setColour(t.col.withAlpha(0.92f));
+                    g.drawText(t.tag, juce::roundToInt(x) - 10, curve.getY() + 1, 20, 11, juce::Justification::centred);
+                }
+            }
+
+            const float y0 = yOfDbDec(0.f);
+            g.setColour(juce::Colour(0xff777777));
+            for (float x = (float) curve.getX(); x < (float) curve.getRight(); x += 10.f)
+                g.drawLine(x, y0, juce::jmin(x + 5.5f, (float) curve.getRight()), y0, 1.25f);
+
+            const juce::String topDbLab = (dMax > 0.001f ? juce::String("+") : juce::String())
+                                          + juce::String(static_cast<int>(dMax)) + " dB";
+            const juce::String midDbLab = "0 dB";
+            const juce::String botDbLab = juce::String(static_cast<int>(dMin)) + " dB";
+
+            auto yForLabel = [&](float db) -> int
+            {
+                const int y = juce::roundToInt(yOfDbDec(db) - 5);
+                const int yMin = curve.getY() + 1;
+                const int yMax = curve.getBottom() - 11;
+                return juce::jlimit(yMin, yMax, y);
+            };
+
+            if (ruler.getWidth() > 0 && scaleRight.getWidth() > 0)
+            {
+                g.setFont(8.2f);
+                g.setColour(kTextBright.withAlpha(0.9f));
+                g.drawText(topDbLab, ruler.getX() + 2, yForLabel(dMax), ruler.getWidth() - 4, 11, juce::Justification::right);
+                g.drawText(midDbLab, ruler.getX() + 2, yForLabel(0.f), ruler.getWidth() - 4, 11, juce::Justification::right);
+                g.drawText(botDbLab, ruler.getX() + 2, yForLabel(dMin), ruler.getWidth() - 4, 11, juce::Justification::right);
+
+                g.setFont(8.2f);
+                g.setColour(kTextMuted);
+                g.drawText(topDbLab, scaleRight.getX(), yForLabel(dMax), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+                g.drawText(midDbLab, scaleRight.getX(), yForLabel(0.f), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+                g.drawText(botDbLab, scaleRight.getX(), yForLabel(dMin), scaleRight.getWidth() - 2, 11, juce::Justification::left);
+            }
         }
 
         auto xOfF = [&](double f) -> float
@@ -437,98 +548,6 @@ namespace
             const float norm = (n - dMin) / (dMax - dMin);
             return (float) curve.getBottom() - norm * (float) curve.getHeight();
         };
-
-        for (float db : { -27.f, -24.f, -18.f, -12.f, -9.f, -6.f, -3.f, 3.f, 6.f, 9.f, 12.f, 18.f, 24.f, 27.f })
-        {
-            if (db <= dMin + 0.001f || db >= dMax - 0.001f || std::abs((double) db) < 0.01)
-                continue;
-            const float y = yOfDb(db);
-            g.setColour(juce::Colour(0xff2a2a2a));
-            g.drawHorizontalLine(juce::roundToInt(y), (float) curve.getX(), (float) curve.getRight());
-        }
-
-        g.setColour(kTextMuted);
-        g.setFont(8.5f);
-        for (double hz : { 100.0, 1000.0, 10000.0 })
-        {
-            if (hz < fLo || hz > fHi)
-                continue;
-            const float x = xOfF(hz);
-            g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY(), (float) curve.getBottom());
-            const juce::String lab = hz == 100.0 ? "100" : (hz == 1000.0 ? "1k" : "10k");
-            g.drawText(lab, juce::roundToInt(x) - 11, curve.getBottom() + 1, 22, 9, juce::Justification::centred);
-        }
-
-        if (apMarkers != nullptr)
-        {
-            struct BandTag
-            {
-                const char* paramId;
-                const char* tag;
-                juce::Colour col;
-            };
-            const BandTag tags[] = { { "lowCf", "Lo", juce::Colour(0xff5dade2) },
-                                     { "mid1Cf", "M1", juce::Colour(0xfff5b041) },
-                                     { "mid2Cf", "M2", juce::Colour(0xffaf7ac5) },
-                                     { "hiCf", "Hi", juce::Colour(0xff7ecbff) } };
-            for (const auto& t : tags)
-            {
-                float hz = apMarkers->getRawParameterValue(t.paramId)->load();
-                if (motionSnap != nullptr && motionSnap->motionEngaged
-                    && cfMotionDepthForMarker(*apMarkers, t.paramId) > 1.0e-6f)
-                {
-                    if (std::strcmp(t.paramId, "lowCf") == 0)
-                        hz = motionSnap->loCfHz;
-                    else if (std::strcmp(t.paramId, "mid1Cf") == 0)
-                        hz = motionSnap->mid1CfHz;
-                    else if (std::strcmp(t.paramId, "mid2Cf") == 0)
-                        hz = motionSnap->mid2CfHz;
-                    else if (std::strcmp(t.paramId, "hiCf") == 0)
-                        hz = motionSnap->hiCfHz;
-                }
-                if (hz < (float) fLo || hz > (float) fHi)
-                    continue;
-                const float x = xOfF(static_cast<double>(hz));
-                g.setColour(t.col.withAlpha(0.38f));
-                g.drawVerticalLine(juce::roundToInt(x), (float) curve.getY() + 13, (float) curve.getBottom());
-                g.setFont(8.2f);
-                g.setColour(t.col.withAlpha(0.92f));
-                g.drawText(t.tag, juce::roundToInt(x) - 10, curve.getY() + 1, 20, 11, juce::Justification::centred);
-            }
-        }
-
-        const float y0 = yOfDb(0.f);
-        g.setColour(juce::Colour(0xff777777));
-        for (float x = (float) curve.getX(); x < (float) curve.getRight(); x += 10.f)
-            g.drawLine(x, y0, juce::jmin(x + 5.5f, (float) curve.getRight()), y0, 1.25f);
-
-        const juce::String topDbLab = (dMax > 0.001f ? juce::String("+") : juce::String())
-                                      + juce::String(static_cast<int>(dMax)) + " dB";
-        const juce::String midDbLab = "0 dB";
-        const juce::String botDbLab = juce::String(static_cast<int>(dMin)) + " dB";
-
-        auto yForLabel = [&](float db) -> int
-        {
-            const int y = juce::roundToInt(yOfDb(db) - 5);
-            const int yMin = curve.getY() + 1;
-            const int yMax = curve.getBottom() - 11;
-            return juce::jlimit(yMin, yMax, y);
-        };
-
-        if (ruler.getWidth() > 0 && scaleRight.getWidth() > 0)
-        {
-            g.setFont(8.2f);
-            g.setColour(kTextBright.withAlpha(0.9f));
-            g.drawText(topDbLab, ruler.getX() + 2, yForLabel(dMax), ruler.getWidth() - 4, 11, juce::Justification::right);
-            g.drawText(midDbLab, ruler.getX() + 2, yForLabel(0.f), ruler.getWidth() - 4, 11, juce::Justification::right);
-            g.drawText(botDbLab, ruler.getX() + 2, yForLabel(dMin), ruler.getWidth() - 4, 11, juce::Justification::right);
-
-            g.setFont(8.2f);
-            g.setColour(kTextMuted);
-            g.drawText(topDbLab, scaleRight.getX(), yForLabel(dMax), scaleRight.getWidth() - 2, 11, juce::Justification::left);
-            g.drawText(midDbLab, scaleRight.getX(), yForLabel(0.f), scaleRight.getWidth() - 2, 11, juce::Justification::left);
-            g.drawText(botDbLab, scaleRight.getX(), yForLabel(dMin), scaleRight.getWidth() - 2, 11, juce::Justification::left);
-        }
 
         juce::Path path;
         bool started = false;
@@ -618,6 +637,12 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     juce::ToggleButton core2BypassToggle { "Bypass Saturator 2" };
     juce::Slider core2Sat;
     juce::Label core2SatLabel;
+    juce::Slider coreDirt;
+    juce::Label coreDirtLabel;
+    juce::Slider coreLifeDepth;
+    juce::Label coreLifeDepthLabel;
+    juce::Slider coreLifeHz;
+    juce::Label coreLifeHzLabel;
     juce::Label motionStatus;
 
     ParaEQ301AudioProcessor& proc;
@@ -807,7 +832,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         eqGraphTooltip.setTooltip(
             "Low / High bands are shelves (tilt EQ), not pass filters. Shelf Hz is the turnover toward the Gain value.\n\n"
-            "Signal path: pre-EQ Core saturation, Low shelf, Mid1, Mid2, High shelf, optional post-EQ Core 2. "
+            "Signal path: pre-EQ core sat → Low shelf → Mid1 → Mid2 → High shelf → post-EQ core sat. "
+            "Core uses asymmetric dirt + optional slow “life” modulation on both sat amounts; DC is trimmed on the wet path.\n\n"
             "Dashed line = 0 dB. Scale is ±30 dB. Coloured tags follow each band’s centre Hz (including Motion).\n\n"
             "Green curve = combined EQ. Knobs: green arc = live value, blue dot = stored rest when Motion is running.");
         addAndMakeVisible(eqGraphTooltip);
@@ -826,13 +852,13 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         addAndMakeVisible(core1BypassToggle);
         styleToggleDark(core1BypassToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "core1Bypass", core1BypassToggle));
-        core1BypassToggle.setTooltip("Checked = pre-EQ saturator fully off (Sat % ignored). Unchecked = apply Sat 1 amount.");
+        core1BypassToggle.setTooltip("Checked = pre-EQ saturator fully off (Sat % ignored). Unchecked = musical core before the EQ.");
 
         styleCoreSatWideSlider(coreSat);
         styleLabel(coreSatLabel, "Sat %");
         addAndMakeVisible(coreSat);
         addAndMakeVisible(coreSatLabel);
-        coreSat.setTooltip("Pre-EQ saturation (tanh blend). Crank both stages for heavy core drive.");
+        coreSat.setTooltip("Pre-EQ core saturation (dry/wet into asymmetric shape). Pairs with post-EQ sat and Dirt / Life.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreSat", coreSat));
         coreSat.textFromValueFunction = [](double v)
         {
@@ -852,7 +878,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleLabel(core2SatLabel, "Sat %");
         addAndMakeVisible(core2Sat);
         addAndMakeVisible(core2SatLabel);
-        core2Sat.setTooltip("Post-EQ saturation after the EQ (tanh blend). Use with Sat 1 + EQ boosts for aggressive tone.");
+        core2Sat.setTooltip("Post-EQ core after the shelf/peak chain. Stack with pre-EQ + Life for a moving, colored stack.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "core2Sat", core2Sat));
         core2Sat.textFromValueFunction = [](double v)
         {
@@ -862,6 +888,48 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         {
             return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
         };
+
+        styleLinearSliderCompact(coreDirt, kAccentGreen);
+        styleLabel(coreDirtLabel, "Dirt");
+        addAndMakeVisible(coreDirt);
+        addAndMakeVisible(coreDirtLabel);
+        coreDirt.setTooltip("Asymmetric core curve: more even harmonics / “chew” at higher values. Affects pre- and post-EQ saturators.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreDirt", coreDirt));
+        coreDirt.textFromValueFunction = [](double v)
+        {
+            return juce::String(juce::roundToInt(v * 100.0)) + " %";
+        };
+        coreDirt.valueFromTextFunction = [](const juce::String& t)
+        {
+            return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
+        };
+
+        styleLinearSliderCompact(coreLifeDepth, kAccentGreen);
+        styleLabel(coreLifeDepthLabel, "Life");
+        addAndMakeVisible(coreLifeDepth);
+        addAndMakeVisible(coreLifeDepthLabel);
+        coreLifeDepth.setTooltip("Slow breathing of pre- and post-EQ sat amounts (different phase each) for a moving core.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreLifeDepth", coreLifeDepth));
+        coreLifeDepth.textFromValueFunction = [](double v)
+        {
+            return juce::String(juce::roundToInt(v * 100.0)) + " %";
+        };
+        coreLifeDepth.valueFromTextFunction = [](const juce::String& t)
+        {
+            return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
+        };
+
+        styleLinearSliderCompact(coreLifeHz, kAccentBlue);
+        styleLabel(coreLifeHzLabel, "Life Hz");
+        addAndMakeVisible(coreLifeHz);
+        addAndMakeVisible(coreLifeHzLabel);
+        coreLifeHz.setTooltip("Rate of the core “life” modulation (independent of band Motion LFOs).");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreLifeHz", coreLifeHz));
+        coreLifeHz.textFromValueFunction = [](double v)
+        {
+            return juce::String(v, 2) + " Hz";
+        };
+        coreLifeHz.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
 
         auto hzStringFromValue = [](double v) { return juce::String(static_cast<int>(std::round(v))) + " Hz"; };
         auto dbStringFromValue = [](double v) { return juce::String(v, 1) + " dB"; };
@@ -959,7 +1027,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         constexpr int kGapAfterMotion = 4;
         constexpr int kCoreRowH = 36;
         constexpr int kCoreBetweenRows = 5;
-        constexpr int kCoreStripH = kCoreRowH + kCoreBetweenRows + kCoreRowH;
+        constexpr int kCoreToneRowH = 34;
+        constexpr int kCoreStripH = kCoreRowH + kCoreBetweenRows + kCoreRowH + kCoreBetweenRows + kCoreToneRowH;
         constexpr int kGapBeforeBands = 6;
         constexpr int kBandRowsH = 4 * kEqRowHeight;
         constexpr int kMinGraphH = 52;
@@ -993,6 +1062,27 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             auto row2 = coreBlock.removeFromTop(kCoreRowH);
             placeCoreRow(row1, core1BypassToggle, coreSat, coreSatLabel);
             placeCoreRow(row2, core2BypassToggle, core2Sat, core2SatLabel);
+            coreBlock.removeFromTop(kCoreBetweenRows);
+            auto toneRow = coreBlock.removeFromTop(kCoreToneRowH);
+            {
+                constexpr int kGapTone = 6;
+                const int colW = juce::jmax(52, (toneRow.getWidth() - 2 * kGapTone) / 3);
+                auto placeToneCell = [&](juce::Rectangle<int> cell, juce::Label& lab, juce::Slider& sl)
+                {
+                    constexpr int kLabW = 52;
+                    auto la = cell.removeFromLeft(juce::jmin(kLabW, cell.getWidth() / 3));
+                    lab.setBounds(la.getX(), cell.getCentreY() - 7, la.getWidth(), 14);
+                    sl.setBounds(cell.getX(), cell.getCentreY() - 9, juce::jmax(40, cell.getWidth()), 18);
+                };
+                auto c0 = toneRow.removeFromLeft(colW);
+                toneRow.removeFromLeft(kGapTone);
+                auto c1 = toneRow.removeFromLeft(colW);
+                toneRow.removeFromLeft(kGapTone);
+                auto c2 = toneRow;
+                placeToneCell(c0, coreDirtLabel, coreDirt);
+                placeToneCell(c1, coreLifeDepthLabel, coreLifeDepth);
+                placeToneCell(c2, coreLifeHzLabel, coreLifeHz);
+            }
         }
 
         bounds.removeFromTop(kGapBeforeBands);
@@ -1294,7 +1384,9 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         curvePlotTooltip.setTooltip(
             "FFT spectrum (left channel). White / light fill + trace = after pre-EQ Core only (before EQ). "
             "Blue = after 4-band EQ and optional post-EQ Core 2 (before limiter).\n\n"
-            "Amber plot = theoretical IIR magnitude (same ±30 dB idea as the EQ tab); it is not part of the FFT before/after comparison.\n\n"
+            "Amber = theoretical 4-band IIR magnitude (±30 dB, same idea as the EQ tab). "
+            "Mint = linear small-signal model of EQ × (optional SVF parallel bandpass at drive 0) × (optional inharmonic bank). "
+            "Mint ignores SVF/bank VA saturation and bank wet tanh; faint verticals mark stiff-string partials when the bank is on.\n\n"
             "Input / output levels: text + horizontal meters at the very top of the plugin (dBFS RMS).");
         addAndMakeVisible(curvePlotTooltip);
     }
@@ -1328,6 +1420,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             freqScratch.resize((size_t) nPts);
             magScratch.resize((size_t) nPts);
             eqMagSmoothed.resize((size_t) nPts);
+            comboMagSmoothed.resize((size_t) nPts);
             specBefore.resize((size_t) nPts);
             specAfter.resize((size_t) nPts);
         }
@@ -1356,6 +1449,31 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             const int im = juce::jmax(0, i - 1);
             const int ip = juce::jmin(nPts - 1, i + 1);
             eqMagSmoothed[(size_t) i] = 0.25f * magScratch[(size_t) im] + 0.5f * magScratch[(size_t) i] + 0.25f * magScratch[(size_t) ip];
+        }
+
+        auto& apCurve = proc.getAPVTS();
+        const bool linearEqListen = apCurve.getRawParameterValue("linearEqListen")->load() > 0.5f;
+        const bool bankTheory = apCurve.getRawParameterValue("anharmBankEnable")->load() > 0.5f
+                                 && apCurve.getRawParameterValue("anharmMix")->load() > 1.0e-6f;
+        const bool svfTheory = apCurve.getRawParameterValue("svfEnable")->load() > 0.5f
+                                 && apCurve.getRawParameterValue("svfMix")->load() > 1.0e-6f;
+        const bool showMintTheory = !linearEqListen && (bankTheory || svfTheory);
+        if (showMintTheory)
+        {
+            proc.getEqChainPlusAnharmLinearDb(sr, freqScratch.data(), magScratch.data(), nPts);
+            for (int i = 0; i < nPts; ++i)
+            {
+                float v = magScratch[(size_t) i];
+                if (!std::isfinite(v))
+                    v = 0.f;
+                magScratch[(size_t) i] = v;
+            }
+            for (int i = 0; i < nPts; ++i)
+            {
+                const int im = juce::jmax(0, i - 1);
+                const int ip = juce::jmin(nPts - 1, i + 1);
+                comboMagSmoothed[(size_t) i] = 0.25f * magScratch[(size_t) im] + 0.5f * magScratch[(size_t) i] + 0.25f * magScratch[(size_t) ip];
+            }
         }
 
         auto specArea = plot.removeFromTop(juce::jmax(110, plot.getHeight() * 58 / 100));
@@ -1478,7 +1596,7 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
         // --- Theoretical EQ curve (smaller) ---
         {
             juce::Rectangle<int> graph = eqArea;
-            graph.removeFromBottom(12);
+            graph.removeFromBottom(14);
             if (graph.getHeight() < 24)
                 return;
 
@@ -1488,10 +1606,54 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
             g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
 
             const juce::Colour kIirModelAmber(0xffffc266);
+            const juce::Colour kAnharmTheoryMint(0xff5ed4b6);
             ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot curveSnap;
             proc.getMotionEffectiveEqSnapshot(curveSnap);
+            if (apCurve.getRawParameterValue("anharmBankEnable")->load() > 0.5f && !linearEqListen)
+            {
+                const float f0 = apCurve.getRawParameterValue("anharmFundHz")->load();
+                const double B = (double) apCurve.getRawParameterValue("anharmInharmB")->load();
+                int nPartDraw = 4;
+                if (auto* pip = dynamic_cast<juce::AudioParameterInt*>(apCurve.getParameter("anharmPartials")))
+                    nPartDraw = juce::jlimit(2, ParaEQ301AudioProcessor::kAnharmMaxPartials, pip->get());
+                for (int p = 1; p <= nPartDraw; ++p)
+                {
+                    const double fn = stiffStringPartialHz((double) f0, p, B);
+                    if (fn < fLo || fn > fHi)
+                        continue;
+                    const double lfn = std::log(fn);
+                    const float xv = (float) (graph.getX() + (lfn - logLo) / (logHi - logLo) * (double) graph.getWidth());
+                    const float al = (p <= 2) ? 0.26f : juce::jmax(0.09f, 0.22f - 0.028f * (float) (p - 2));
+                    g.setColour(kAnharmTheoryMint.withAlpha(al));
+                    g.drawVerticalLine(juce::roundToInt(xv), (float) graph.getY() + 2.f, (float) graph.getBottom());
+                }
+            }
+            if (svfTheory)
+            {
+                const float svc = apCurve.getRawParameterValue("svfCf")->load();
+                if (svc >= (float) fLo && svc <= (float) fHi)
+                {
+                    const double lfs = std::log((double) svc);
+                    const float xv = (float) (graph.getX() + (lfs - logLo) / (logHi - logLo) * (double) graph.getWidth());
+                    g.setColour(juce::Colour(0xff5dade2).withAlpha(0.3f));
+                    g.drawVerticalLine(juce::roundToInt(xv), (float) graph.getY() + 2.f, (float) graph.getBottom());
+                }
+            }
+
             paintEqMagnitudeCurveInRect(g, graph, freqScratch, eqMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
-                                        &proc.getAPVTS(), &curveSnap, kIirModelAmber, false, 0, 0);
+                                        &proc.getAPVTS(), &curveSnap, kIirModelAmber, false, 0, 0, true);
+            if (showMintTheory)
+            {
+                paintEqMagnitudeCurveInRect(g, graph, freqScratch, comboMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
+                                            nullptr, nullptr, kAnharmTheoryMint, false, 0, 0, false);
+            }
+
+            g.setFont(7.8f);
+            g.setColour(kTextMuted.withAlpha(0.88f));
+            juce::String leg = "Amber: 4-band IIR";
+            if (showMintTheory)
+                leg += "   Mint: EQ linear (SVF0 + bank)";
+            g.drawText(leg, graph.getX(), graph.getBottom() + 1, graph.getWidth(), 11, juce::Justification::centred);
         }
     }
 
@@ -1501,11 +1663,404 @@ struct ParaEQ301AudioProcessorEditor::CurveTabContent : public juce::Component, 
     std::vector<double> freqScratch;
     std::vector<float> magScratch;
     std::vector<float> eqMagSmoothed;
+    std::vector<float> comboMagSmoothed;
     std::vector<float> specBefore;
     std::vector<float> specAfter;
 };
 
 /** Spectrum / meters (top) + Motion LFO controls (bottom) on one tab. */
+struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
+{
+    juce::Label programLabel;
+    juce::ComboBox programBox;
+    juce::Label oversampleLabel;
+    juce::ComboBox oversampleBox;
+    juce::ToggleButton linearEqToggle { "Linear EQ only (RBJ A/B)" };
+    juce::Label intro;
+    juce::Slider coreCrunch;
+    juce::Label coreCrunchL;
+    juce::Slider roastPreEmphDb;
+    juce::Label roastPreEmphDbL;
+    juce::Slider roastPostTiltDb;
+    juce::Label roastPostTiltDbL;
+    juce::Slider roastBoostTrack;
+    juce::Label roastBoostTrackL;
+    juce::Slider roastMidChain;
+    juce::Label roastMidChainL;
+    juce::Slider roastLowChain;
+    juce::Label roastLowChainL;
+    juce::Slider roastPunch;
+    juce::Label roastPunchL;
+    juce::Slider roastGlue;
+    juce::Label roastGlueL;
+    juce::Slider roastLoFi;
+    juce::Label roastLoFiL;
+    juce::Slider roastRing;
+    juce::Label roastRingL;
+    juce::Slider roastEnvDrive;
+    juce::Label roastEnvDriveL;
+    juce::Slider roastFlutter;
+    juce::Label roastFlutterL;
+    juce::Slider roastStereoWide;
+    juce::Label roastStereoWideL;
+    juce::Slider roastOutputTrimDb;
+    juce::Label roastOutputTrimDbL;
+
+    juce::Label svfTitle;
+    juce::ToggleButton svfEnableToggle { "SVF on" };
+    juce::Slider svfMix;
+    juce::Label svfMixL;
+    juce::Slider svfCf;
+    juce::Label svfCfL;
+    juce::Slider svfQ;
+    juce::Label svfQL;
+    juce::Slider svfDrive;
+    juce::Label svfDriveL;
+    juce::Slider svfGainDb;
+    juce::Label svfGainDbL;
+
+    ParaEQ301AudioProcessor& proc;
+
+    static void placeRow(juce::Rectangle<int>& col, juce::Label& cap, juce::Slider& sl, int rowH)
+    {
+        auto row = col.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY(), row.getWidth(), 14);
+        sl.setBounds(row.getX(), row.getY() + 16, row.getWidth(), row.getHeight() - 18);
+    }
+
+    RoastTabContent(ParaEQ301AudioProcessor& processor,
+                    juce::AudioProcessorValueTreeState& ap,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+        : proc(processor)
+    {
+        styleLabelDark(programLabel, "Factory preset", true);
+        addAndMakeVisible(programLabel);
+        programBox.setTooltip("Built-in snapshots (Init, roast stacks, Motion, linear A/B). Host preset save still stores full APVTS.");
+        addAndMakeVisible(programBox);
+        for (int i = 0; i < ParaEQ301AudioProcessor::kNumFactoryPrograms; ++i)
+            programBox.addItem(proc.getProgramName(i), i + 1);
+        programBox.onChange = [this]()
+        {
+            const int id = programBox.getSelectedId();
+            if (id > 0)
+                proc.setCurrentProgram(id - 1);
+        };
+        programBox.setSelectedId(proc.getCurrentProgram() + 1, juce::dontSendNotification);
+
+        styleLabelDark(oversampleLabel, "OS", true);
+        oversampleLabel.setTooltip("Oversampling: run the roast + EQ + SVF path at 2× or 4× the host rate to reduce aliasing from saturators, SVF, and lo-fi. Higher CPU. Disabled in Linear EQ only.");
+        addAndMakeVisible(oversampleLabel);
+        oversampleBox.setTooltip(oversampleLabel.getTooltip());
+        if (auto* oc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("oversample")))
+            oversampleBox.addItemList(oc->choices, 1);
+        addAndMakeVisible(oversampleBox);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "oversample", oversampleBox));
+
+        styleToggleDark(linearEqToggle);
+        linearEqToggle.setTooltip("Bypass all saturation and roast color — linear RBJ IIR chain only (plus trim + limiter).");
+        addAndMakeVisible(linearEqToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "linearEqListen", linearEqToggle));
+
+        styleLabelDark(intro,
+                       "Crunch / roast: pre HF → cores → low/mid taps → linear EQ → nonlinear SVF (parallel BP) → core 2 → post tilt → lo-fi → glue → ring. "
+                       "Boost track follows Motion when engaged. Optional sidechain bus: future.",
+                       true);
+        intro.setJustificationType(juce::Justification::topLeft);
+        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        addAndMakeVisible(intro);
+
+        auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        };
+
+        auto wireDb = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentBlue);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        };
+
+        wirePct(coreCrunch, coreCrunchL, "coreCrunch", "Crunch %",
+                "Blend toward a harder ‘roasted’ curve inside the core saturator (both pre/post/mid taps).");
+        wireDb(roastPreEmphDb, roastPreEmphDbL, "roastPreEmphDb", "Pre HF dB",
+                "High shelf (~3 kHz) before the first core — more fizz and crunch when driven.");
+        wireDb(roastPostTiltDb, roastPostTiltDbL, "roastPostTiltDb", "Post tilt dB",
+                "High shelf (~5.5 kHz) after the last core — dark (negative) or crispy (positive).");
+        wirePct(roastBoostTrack, roastBoostTrackL, "roastBoostTrack", "Boost track %",
+                "More drive when bands are boosted in dB — uses Motion snapshot gains when Motion is engaged, else EQ-tab values.");
+        wirePct(roastMidChain, roastMidChainL, "roastMidChain", "Mid-chain %",
+                "Extra core tap between Mid1 and Mid2 (amount × max of effective pre/post drive).");
+        wirePct(roastLowChain, roastLowChainL, "roastLowChain", "Low-chain %",
+                "Core tap after the low shelf, before Mid1 (amount × max of effective pre/post drive).");
+        wirePct(roastPunch, roastPunchL, "roastPunch", "Punch %",
+                "Fast peak-aware gain reduction before the first core so you can lean harder into sat.");
+        wirePct(roastGlue, roastGlueL, "roastGlue", "Glue %",
+                "Slower peak-aware leveling after lo-fi / before ring, to seat the distortion.");
+        wirePct(roastLoFi, roastLoFiL, "roastLoFi", "Lo-fi %",
+                "Bit-depth + hold decimation on the wet portion of the tail chain.");
+        wirePct(roastRing, roastRingL, "roastRing", "Ring %",
+                "AM-style ring in the low audio range — metallic edge at higher values.");
+        wirePct(roastEnvDrive, roastEnvDriveL, "roastEnvDrive", "Env drive %",
+                "Smoothed level at the pre-core input pushes effective sat drive (per channel).");
+        wirePct(roastFlutter, roastFlutterL, "roastFlutter", "Flutter %",
+                "Audio-rate wobble on effective drive (~42 Hz scaled by amount).");
+        wirePct(roastStereoWide, roastStereoWideL, "roastStereoWide", "Stereo life %",
+                "Offsets core ‘life’ phase on the right channel for wider moving saturation.");
+        wireDb(roastOutputTrimDb, roastOutputTrimDbL, "roastOutputTrimDb", "Out trim dB",
+                "Gain trim after the roast chain, before the Output tab limiter.");
+
+        styleLabelDark(svfTitle, "Nonlinear SVF (VA resonator)", true);
+        svfTitle.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
+        addAndMakeVisible(svfTitle);
+        styleToggleDark(svfEnableToggle);
+        svfEnableToggle.setTooltip("Trapezoidal ZDF SVF bandpass, parallel into the hot path after the high shelf (before Core 2).");
+        addAndMakeVisible(svfEnableToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "svfEnable", svfEnableToggle));
+
+        wirePct(svfMix, svfMixL, "svfMix", "SVF mix %",
+                "Dry + wet bandpass injection; use modest mix at high Q.");
+        styleLinearSliderCompact(svfCf, kAccentBlue);
+        styleLabelDark(svfCfL, "SVF Hz", true);
+        addAndMakeVisible(svfCf);
+        addAndMakeVisible(svfCfL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "svfCf", svfCf));
+        svfCf.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " Hz"; };
+        svfCf.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        svfCf.setTooltip("Bandpass centre (skewed Hz).");
+
+        styleLinearSliderCompact(svfQ, kAccentBlue);
+        styleLabelDark(svfQL, "SVF Q", true);
+        addAndMakeVisible(svfQ);
+        addAndMakeVisible(svfQL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "svfQ", svfQ));
+        svfQ.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+        svfQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        svfQ.setTooltip("Resonance (higher Q = narrower peak, more energy at cf).");
+
+        wirePct(svfDrive, svfDriveL, "svfDrive", "SVF VA %",
+                "Saturates the SVF loop input for VA-style resonance limiting / crunch at extremes.");
+        wireDb(svfGainDb, svfGainDbL, "svfGainDb", "SVF BP dB",
+                "Gain of the bandpass branch before it is mixed in (±18 dB).");
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(8);
+        auto svfArea = b.removeFromBottom(118);
+        auto top = b.removeFromTop(28);
+        programLabel.setBounds(top.removeFromLeft(96).reduced(0, 4));
+        programBox.setBounds(top.removeFromLeft(juce::jmin(200, top.getWidth())).reduced(0, 2));
+        top.removeFromLeft(10);
+        oversampleLabel.setBounds(top.removeFromLeft(22).reduced(0, 4));
+        oversampleBox.setBounds(top.removeFromLeft(72).reduced(0, 2));
+        b.removeFromTop(6);
+        linearEqToggle.setBounds(b.removeFromTop(22));
+        b.removeFromTop(6);
+        intro.setBounds(b.removeFromTop(48));
+        b.removeFromTop(6);
+        constexpr int kRow = 40;
+        auto left = b.removeFromLeft(b.getWidth() / 2 - 4);
+        auto right = b;
+        right.removeFromLeft(8);
+        placeRow(left, coreCrunchL, coreCrunch, kRow);
+        placeRow(left, roastPreEmphDbL, roastPreEmphDb, kRow);
+        placeRow(left, roastPostTiltDbL, roastPostTiltDb, kRow);
+        placeRow(left, roastBoostTrackL, roastBoostTrack, kRow);
+        placeRow(left, roastMidChainL, roastMidChain, kRow);
+        placeRow(left, roastLowChainL, roastLowChain, kRow);
+        placeRow(left, roastPunchL, roastPunch, kRow);
+        placeRow(left, roastGlueL, roastGlue, kRow);
+        placeRow(right, roastLoFiL, roastLoFi, kRow);
+        placeRow(right, roastRingL, roastRing, kRow);
+        placeRow(right, roastEnvDriveL, roastEnvDrive, kRow);
+        placeRow(right, roastFlutterL, roastFlutter, kRow);
+        placeRow(right, roastStereoWideL, roastStereoWide, kRow);
+        placeRow(right, roastOutputTrimDbL, roastOutputTrimDb, kRow);
+
+        svfTitle.setBounds(svfArea.removeFromTop(14));
+        svfArea.removeFromTop(4);
+        auto svfR1 = svfArea.removeFromTop(24);
+        svfEnableToggle.setBounds(svfR1.removeFromLeft(100));
+        svfR1.removeFromLeft(8);
+        svfMixL.setBounds(svfR1.removeFromLeft(52).withTrimmedTop(4));
+        svfMix.setBounds(svfR1.removeFromLeft(juce::jmin(200, svfR1.getWidth() / 2)).reduced(0, 2));
+        svfArea.removeFromTop(6);
+        auto svfR2 = svfArea.removeFromTop(36);
+        const int gap = 6;
+        const int colW = (svfR2.getWidth() - 3 * gap) / 4;
+        auto takeCol = [&](juce::Label& lab, juce::Slider& sl)
+        {
+            auto c = svfR2.removeFromLeft(colW);
+            lab.setBounds(c.getX(), c.getY(), colW, 12);
+            sl.setBounds(c.getX(), c.getY() + 14, colW, 20);
+            svfR2.removeFromLeft(gap);
+        };
+        takeCol(svfCfL, svfCf);
+        takeCol(svfQL, svfQ);
+        takeCol(svfDriveL, svfDrive);
+        takeCol(svfGainDbL, svfGainDb);
+    }
+};
+
+struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
+{
+    juce::Label intro;
+    juce::ToggleButton univBellToggle { "Universal bell (Orfanidis)" };
+    juce::ToggleButton anharmOnToggle { "Inharmonic partial bank" };
+    juce::Slider anharmFund;
+    juce::Label anharmFundL;
+    juce::Slider anharmB;
+    juce::Label anharmBL;
+    juce::Slider anharmPartials;
+    juce::Label anharmPartialsL;
+    juce::Slider anharmMix;
+    juce::Label anharmMixL;
+    juce::Slider anharmPerDb;
+    juce::Label anharmPerDbL;
+    juce::Slider anharmQ;
+    juce::Label anharmQL;
+    juce::Slider anharmNl;
+    juce::Label anharmNlL;
+    juce::Slider anharmEnvQ;
+    juce::Label anharmEnvQL;
+
+    static void placeRow(juce::Rectangle<int>& col, juce::Label& cap, juce::Slider& sl, int rowH)
+    {
+        auto row = col.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY(), row.getWidth(), 14);
+        sl.setBounds(row.getX(), row.getY() + 16, row.getWidth(), row.getHeight() - 18);
+    }
+
+    AnharmTabContent(juce::AudioProcessorValueTreeState& ap,
+                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+    {
+        styleLabelDark(intro,
+                       "1) Universal bell: Orfanidis-style mid peaking (tighter bandwidth vs naive RBJ at high cf). "
+                       "2) Inharmonic bank: stiff-string partials f_n = n·f0·sqrt(1+B(n²−1)), parallel after SVF. "
+                       "3) Level-dependent Q + wet tanh: env→Q widens peaks when signal is hot; Anharm wet sat soft-limits the bank sum.",
+                       true);
+        intro.setJustificationType(juce::Justification::topLeft);
+        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        addAndMakeVisible(intro);
+
+        styleToggleDark(univBellToggle);
+        univBellToggle.setTooltip("When on, Mid1/Mid2 use Orfanidis peaking design (Dw from Q via sinh mapping, Gb=sqrt(G)).");
+        addAndMakeVisible(univBellToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "univBell", univBellToggle));
+
+        styleToggleDark(anharmOnToggle);
+        anharmOnToggle.setTooltip("Parallel peaking filters on stiff-string partials of the fundamental (before Core 2).");
+        addAndMakeVisible(anharmOnToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "anharmBankEnable", anharmOnToggle));
+
+        auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        };
+
+        auto wireDb = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentBlue);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        };
+
+        styleLinearSliderCompact(anharmFund, kAccentBlue);
+        styleLabelDark(anharmFundL, "Fundamental Hz", true);
+        addAndMakeVisible(anharmFund);
+        addAndMakeVisible(anharmFundL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "anharmFundHz", anharmFund));
+        anharmFund.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " Hz"; };
+        anharmFund.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(anharmB, kAccentBlue);
+        styleLabelDark(anharmBL, "Inharmonicity B", true);
+        addAndMakeVisible(anharmB);
+        addAndMakeVisible(anharmBL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "anharmInharmB", anharmB));
+        anharmB.textFromValueFunction = [](double v) { return juce::String(v, 5); };
+        anharmB.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(anharmPartials, kAccentGreen);
+        styleLabelDark(anharmPartialsL, "Partials (2–6)", true);
+        addAndMakeVisible(anharmPartials);
+        addAndMakeVisible(anharmPartialsL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "anharmPartials", anharmPartials));
+        anharmPartials.setRange(2.0, 6.0, 1.0);
+        anharmPartials.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)); };
+        anharmPartials.valueFromTextFunction = [](const juce::String& t) { return (double) t.getIntValue(); };
+
+        wirePct(anharmMix, anharmMixL, "anharmMix", "Bank mix %", "Wet amount of parallel inharmonic peak sum (after SVF, before Core 2).");
+        wireDb(anharmPerDb, anharmPerDbL, "anharmPerPartialDb", "1st partial dB", "Gain of partial n=1; higher partials roll off ~2.2 dB each.");
+        styleLinearSliderCompact(anharmQ, kAccentBlue);
+        styleLabelDark(anharmQL, "Bank Q", true);
+        addAndMakeVisible(anharmQ);
+        addAndMakeVisible(anharmQL);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "anharmQ", anharmQ));
+        anharmQ.textFromValueFunction = [](double v) { return juce::String(v, 1); };
+        anharmQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        wirePct(anharmNl, anharmNlL, "anharmNl", "Wet sat %", "tanh on the summed bank injection — amplitude-dependent narrowing of large resonant adds.");
+        wirePct(anharmEnvQ, anharmEnvQL, "anharmEnvQ", "Env→Q %", "Follower on |x| lowers effective Q when the band is driven (anharmonic resonance curve).");
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(8);
+        intro.setBounds(b.removeFromTop(72));
+        b.removeFromTop(8);
+        auto toggles = b.removeFromTop(26);
+        univBellToggle.setBounds(toggles.removeFromLeft(220));
+        toggles.removeFromLeft(12);
+        anharmOnToggle.setBounds(toggles.removeFromLeft(200));
+        b.removeFromTop(10);
+        constexpr int kRow = 40;
+        auto left = b.removeFromLeft(b.getWidth() / 2 - 4);
+        auto right = b;
+        right.removeFromLeft(8);
+        placeRow(left, anharmFundL, anharmFund, kRow);
+        placeRow(left, anharmBL, anharmB, kRow);
+        placeRow(left, anharmPartialsL, anharmPartials, kRow);
+        placeRow(left, anharmMixL, anharmMix, kRow);
+        placeRow(left, anharmPerDbL, anharmPerDb, kRow);
+        placeRow(right, anharmQL, anharmQ, kRow);
+        placeRow(right, anharmNlL, anharmNl, kRow);
+        placeRow(right, anharmEnvQL, anharmEnvQ, kRow);
+    }
+};
+
 struct ParaEQ301AudioProcessorEditor::CurveMotionTabContent : public juce::Component
 {
     CurveMotionTabContent(ParaEQ301AudioProcessor& processor,
@@ -1544,10 +2099,14 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     eqPage = std::make_unique<EqTabContent>(proc, ap, attachments, buttonAttachments);
     curveMotionPage = std::make_unique<CurveMotionTabContent>(proc, ap, attachments);
+    roastPage = std::make_unique<RoastTabContent>(proc, ap, attachments, buttonAttachments, comboAttachments);
+    anharmPage = std::make_unique<AnharmTabContent>(ap, attachments, buttonAttachments);
     outPage = std::make_unique<OutTabContent>();
 
     tabs.addTab("EQ", kPanelBlack, eqPage.get(), false);
     tabs.addTab("Curve + Motion", kPanelBlack, curveMotionPage.get(), false);
+    tabs.addTab("Roast", kPanelBlack, roastPage.get(), false);
+    tabs.addTab("Anharm", kPanelBlack, anharmPage.get(), false);
     tabs.addTab("Output", kPanelBlack, outPage.get(), false);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, kPanelBlack);
@@ -1590,7 +2149,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(520, 760);
+    setSize(520, 1000);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()

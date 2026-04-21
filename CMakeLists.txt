@@ -43,7 +43,8 @@ juce_generate_juce_header(ParaEQ301)
 target_sources(ParaEQ301
     PRIVATE
         Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp)
+        Source/PluginEditor.cpp
+        Source/ParametricEqDesign.h)
 
 target_compile_definitions(ParaEQ301
     PUBLIC
