@@ -20,9 +20,6 @@ namespace
         return 8 + 20 + 4 + 4 * kRowHeight + (20 + kSliderColumnH) + 8;
     }
 
-    /** Min width for Hi/M1/M2/Lo motion row (phase dot + title + four 56px knob columns + gaps). */
-    constexpr int kLfoMotionBandsGridW = 14 + 4 + 30 + 6 + 4 * 56 + 3 * 6;
-
     // Matches per-band gain parameter range (+/-30 dB). Combined chain can exceed this; draw clamps to plot edges.
     constexpr float kEqMagPlotDbMin = -30.f;
     constexpr float kEqMagPlotDbMax = 30.f;
@@ -116,12 +113,20 @@ namespace
         s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff555555));
     }
 
-    // EQ value column: wide enough for "18000 Hz" / "-30.0 dB" in monospace without ellipsis or horizontal squish.
-    constexpr int kEqSliderColW = 78;
-    constexpr int kEqTextBoxW = 74;
+    // EQ column: rotary + monospace readout. Cf/gain use kEqTextBoxW; Width Hz max "2000 Hz" uses a narrower box.
+    constexpr int kEqSliderColW = 72;
+    constexpr int kEqTextBoxW = 66;
+    constexpr int kEqBwTextBoxW = 56;
     constexpr int kEqTextBoxH = 20;
     constexpr int kEqSliderColumnH = kKnobSize + kEqTextBoxH;
     constexpr int kEqRowHeight = kEqSliderColumnH + kGapCaption + kCaptionH;
+
+    /** Min width for one Motion row when LFO rotaries match EQ band knobs (78px cols; M1/M2 four-knob row is widest). */
+    constexpr int kLfoMotionInterleavedMinW() noexcept
+    {
+        constexpr int tw = 26;
+        return 14 + 4 + tw + 6 + 4 * kEqSliderColW + 3 * 6;
+    }
 
     /** Vertical chrome on EQ tab below the graph (shared by resized + minimum scroll height). */
     struct PeqEqTabLayoutMetrics
@@ -199,7 +204,7 @@ namespace
                                           .withHeight(11.0f)));
                 l->setMinimumHorizontalScale(1.0f);
                 l->setJustificationType(juce::Justification::centred);
-                l->setBorderSize(juce::BorderSize<int>(0, 4, 0, 4));
+                l->setBorderSize(juce::BorderSize<int>(0, 2, 0, 2));
             }
             return l;
         }
@@ -1081,12 +1086,27 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
     {
         const int phaseS = 14;
         const int colGap = 6;
-        const int titleW = rowArea.getWidth() >= 320 ? 30 : 22;
         const int numCols = r.useBw ? 4 : 3;
-        const int head = phaseS + 4 + titleW + colGap;
-        const int inner = juce::jmax(0, rowArea.getWidth() - head - 2);
-        int kw = numCols > 0 ? (inner - numCols * colGap) / numCols : 26;
-        kw = juce::jlimit(26, 56, kw);
+
+        int kw, colH, tbH;
+        int titleW;
+        if (motionLayoutInterleaved)
+        {
+            kw = kEqSliderColW;
+            colH = kEqSliderColumnH;
+            tbH = kEqTextBoxH - 1;
+            titleW = 26;
+        }
+        else
+        {
+            titleW = rowArea.getWidth() >= 320 ? 30 : 22;
+            const int head = phaseS + 4 + titleW + colGap;
+            const int inner = juce::jmax(0, rowArea.getWidth() - head - 2);
+            kw = numCols > 0 ? (inner - numCols * colGap) / numCols : 26;
+            kw = juce::jlimit(26, 56, kw);
+            colH = kSliderColumnH;
+            tbH = kTextBoxH - 2;
+        }
 
         auto a = rowArea;
         lfoDotOut = { a.getX() + 1, a.getY() + 8, phaseS, phaseS };
@@ -1095,9 +1115,9 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
 
         auto placeCol = [&](juce::Slider& sl, juce::Label& cap)
         {
-            const int tbW = juce::jmax(26, kw - 2);
-            sl.setBounds(x, rowArea.getY(), kw, kSliderColumnH);
-            sl.setTextBoxStyle(juce::Slider::TextBoxBelow, false, tbW, kTextBoxH - 2);
+            const int tbW = motionLayoutInterleaved ? kEqTextBoxW : juce::jmax(26, kw - 2);
+            sl.setBounds(x, rowArea.getY(), kw, colH);
+            sl.setTextBoxStyle(juce::Slider::TextBoxBelow, false, tbW, tbH);
             cap.setBounds(x, sl.getBottom() + kGapCaption, kw, kCaptionH);
             x += kw + colGap;
         };
@@ -1133,8 +1153,8 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
             const auto& row0 = motionLfoPaintRect[0];
             auto stereoRow = row0.reduced(4, 0);
             const int knobY = row0.getY();
-            const int knobH = kSliderColumnH;
-            const int stw = juce::jmin(kKnobSize, juce::jmax(32, (stereoRow.getWidth() - 8) / 5));
+            const int knobH = kEqSliderColumnH;
+            const int stw = juce::jmin(kKnobSize, juce::jmax(kEqSliderColW - 8, (stereoRow.getWidth() - 8) / 5));
             stereo.setBounds(stereoRow.getRight() - stw, knobY, stw, knobH);
             const int labRight = stereo.getX() - 6;
             const int labW = juce::jmin(stereoLabW, juce::jmax(40, labRight - stereoRow.getX()));
@@ -1145,7 +1165,7 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
 
         auto b = getLocalBounds().reduced(8);
         constexpr int kRightPanelMinW = 148;
-        const int bandsW = juce::jmin(kLfoMotionBandsGridW, juce::jmax(200, b.getWidth() - kRightPanelMinW));
+        const int bandsW = juce::jmin(kLfoMotionInterleavedMinW(), juce::jmax(200, b.getWidth() - kRightPanelMinW));
         const int motionBodyH = juce::jmax(4 * kRowHeight, b.getHeight());
         auto motionBody = b.removeFromTop(motionBodyH);
         auto bandsRect = motionBody.removeFromLeft(bandsW);
@@ -1592,8 +1612,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         }
         mid1.bw.textFromValueFunction = hzStringFromValue;
         mid1.bw.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        mid1.bw.setTextBoxStyle(juce::Slider::TextBoxBelow, false, kEqBwTextBoxW, kEqTextBoxH - 1);
         mid2.bw.textFromValueFunction = hzStringFromValue;
         mid2.bw.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        mid2.bw.setTextBoxStyle(juce::Slider::TextBoxBelow, false, kEqBwTextBoxW, kEqTextBoxH - 1);
 
         for (auto* s : {&hi.gain, &mid1.gain, &mid2.gain, &low.gain})
         {
@@ -1753,11 +1775,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         constexpr int eqGap = 6;
         constexpr int kEqMotionColGap = 10;
         const int step = kEqSliderColW + eqGap;
-        /** Left side up to and including the rightmost EQ knob column (same for shelf + peaking rows). */
+        /** Left side through the third EQ knob column (0-based cols 0..2); gain sits in col 2 for peaking, col 1 for shelf. */
         const int eqKnobsRightX = bandStripW + gapAfterBandStrip + 3 * step + kEqSliderColW;
-        /** Same-row Motion: LFO strip uses flexible knob widths — allow merge at typical ~600px tab widths (was blocked by jmax(200,lfoW)). */
-        constexpr int kLfoSameRowMinRemainderW = 100;
-        const int mergedWideMinW = eqKnobsRightX + kEqMotionColGap + kLfoSameRowMinRemainderW;
+        /** Same-row Motion only when the remainder fits full-size (78px) LFO columns; otherwise stacked strip below. */
+        const int mergedWideMinW = eqKnobsRightX + kEqMotionColGap + kLfoMotionInterleavedMinW();
 
         juce::Rectangle<int> bandBounds = bounds;
         const bool mergedBandPlusLfo = (bandBounds.getWidth() >= mergedWideMinW);
@@ -1781,15 +1802,17 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             {
                 placeKnobCol(band.cf, band.cfLabel, 0);
                 placeKnobCol(band.bw, band.bwLabel, 1);
-                placeKnobCol(band.gain, band.gainLabel, 3);
+                placeKnobCol(band.gain, band.gainLabel, 2);
             }
             else
             {
-                placeKnobCol(band.cf, band.cfLabel, 1);
-                placeKnobCol(band.gain, band.gainLabel, 3);
+                placeKnobCol(band.cf, band.cfLabel, 0);
+                placeKnobCol(band.gain, band.gainLabel, 1);
             }
 
-            const int tintRight = mergedBandPlusLfo ? bandBounds.getRight() : (xCol0 + 3 * step + kEqSliderColW);
+            const int lastCol = (band.hasBw && band.hasCfInLeftColumn) ? 2 : 1;
+            const int rowEqKnobRight = xCol0 + lastCol * step + kEqSliderColW;
+            const int tintRight = mergedBandPlusLfo ? bandBounds.getRight() : rowEqKnobRight;
             motionRowRect[(size_t) rowIndex] = { bandBounds.getX(), y, tintRight - bandBounds.getX() + 2, kEqRowHeight };
         };
 
@@ -2634,7 +2657,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(600, 1000);
+    setSize(920, 1000);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
