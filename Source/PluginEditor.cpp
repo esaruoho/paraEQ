@@ -805,8 +805,14 @@ namespace
         float peak = -200.f;
         for (int i = 0; i < nPts; ++i)
             peak = juce::jmax(peak, specBefore[(size_t) i], specAfter[(size_t) i]);
-        const float topDb = juce::jmin(0.f, peak + 4.f);
-        const float botDb = topDb - 56.f;
+        if (!std::isfinite(peak))
+            peak = -100.f;
+        // Do not cap top at 0 dB — strong EQ / resonant peaks can read above 0 in this FFT view; without headroom
+        // they pin to the top of the strip ("clip mode"). Keep air above the trace so boosts stay readable.
+        constexpr float kSpectrumTopHeadroomDb = 10.f;
+        constexpr float kSpectrumSpanDb = 64.f;
+        const float topDb = peak + kSpectrumTopHeadroomDb;
+        const float botDb = topDb - kSpectrumSpanDb;
         const float yBottom = (float) freqGraph.getBottom();
         const float yTopPad = (float) freqGraph.getY() + 2.f;
         const float yBotPad = yBottom - 3.f;
