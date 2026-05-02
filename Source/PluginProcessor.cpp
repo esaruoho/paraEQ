@@ -326,17 +326,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
 
     layout.add(std::make_unique<juce::AudioParameterBool>("core1Bypass", "Bypass Saturator 1", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "coreSat", "Sat 1 amount",
+        "coreSat", "ThrillMe 1 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "core2Sat", "Sat 2 amount",
+        "core2Sat", "ThrillMe 2 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill1Spec", "ThrillMe 1 spectral",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill1ThreshDb", "ThrillMe 1 threshold",
+        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill1Ratio", "ThrillMe 1 ratio",
+        juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel(":1")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill2Spec", "ThrillMe 2 spectral",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill2ThreshDb", "ThrillMe 2 threshold",
+        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "thrill2Ratio", "ThrillMe 2 ratio",
+        juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel(":1")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "coreDirt", "Core dirt",
@@ -442,6 +474,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<juce::AudioParameterBool>("linearEqListen", "Linear EQ only", false));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("eqPinkLevelBal", "EQ pink level balance", true));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "oversample", "Oversampling",
@@ -556,6 +590,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         90.0f,
         juce::AudioParameterFloatAttributes().withLabel("ms")));
 
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "masterDryWet", "Dry/Wet",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
     return layout;
 }
 
@@ -591,6 +631,13 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
     // Must match actual bus width (mono = 1). Do not force 2 — limiter/compressors break on mono otherwise.
     maxChannelsPrepared = juce::jmax(1, juce::jmax(getTotalNumOutputChannels(), getTotalNumInputChannels()));
     maxChannelsPrepared = juce::jmin(maxChannelsPrepared, 4);
+
+    dryMixScratch.setSize(maxChannelsPrepared, samplesPerBlock > 0 ? samplesPerBlock : 512, false, false, true);
+
+    thrillMe1.prepare(currentSampleRate, maxChannelsPrepared);
+    thrillMe2.prepare(currentSampleRate, maxChannelsPrepared);
+    thrillMe1.updateSpectralCoeffs(currentSampleRate, apvts.getRawParameterValue("thrill1Spec")->load());
+    thrillMe2.updateSpectralCoeffs(currentSampleRate, apvts.getRawParameterValue("thrill2Spec")->load());
 
     for (int ch = 0; ch < maxChannelsPrepared; ++ch)
     {
@@ -955,6 +1002,53 @@ void ParaEQ301AudioProcessor::updateFiltersForChannel(int ch, double sampleRate,
     *highShelfPerChannel[i].coefficients = *Coefficients::makeHighShelf(sampleRate, hiCf, kShelfQ, hiLin);
 }
 
+namespace
+{
+    /** Log-spaced magnitude samples; sqrt(mean(|H|^2)) approximates pink RMS vs flat reference. */
+    float eqFourBandPinkRmsMagLinear(double sr,
+                                     const juce::dsp::IIR::Coefficients<float>* cLo,
+                                     const juce::dsp::IIR::Coefficients<float>* cM1,
+                                     const juce::dsp::IIR::Coefficients<float>* cM2,
+                                     const juce::dsp::IIR::Coefficients<float>* cHi) noexcept
+    {
+        if (cLo == nullptr || cM1 == nullptr || cM2 == nullptr || cHi == nullptr)
+            return 1.f;
+        const double nyq = sr * 0.499;
+        const double fMin = 45.0;
+        const double fMax = juce::jmin(16000.0, nyq);
+        if (fMax <= fMin * 1.01)
+            return 1.f;
+        constexpr int N = 56;
+        double sumM2 = 0.0;
+        const double logA = std::log(fMin);
+        const double logB = std::log(fMax);
+        for (int i = 0; i < N; ++i)
+        {
+            const double t = (N <= 1) ? 0.5 : (double) i / (double) (N - 1);
+            const double f = std::exp(logA + t * (logB - logA));
+            double m = cLo->getMagnitudeForFrequency(f, sr);
+            m *= cM1->getMagnitudeForFrequency(f, sr);
+            m *= cM2->getMagnitudeForFrequency(f, sr);
+            m *= cHi->getMagnitudeForFrequency(f, sr);
+            sumM2 += m * m;
+        }
+        return static_cast<float>(std::sqrt(juce::jmax(1.0e-30, sumM2 / (double) N)));
+    }
+}
+
+float ParaEQ301AudioProcessor::computeEqFourBandPinkLevelCompensation(double sampleRate, int channelIndex) const noexcept
+{
+    const int ch = juce::jlimit(0, juce::jmax(0, maxChannelsPrepared - 1), channelIndex);
+    const size_t ci = static_cast<size_t>(ch);
+    const auto* cLo = lowShelfPerChannel[ci].coefficients.get();
+    const auto* cM1 = mid1PeakPerChannel[ci].coefficients.get();
+    const auto* cM2 = mid2PeakPerChannel[ci].coefficients.get();
+    const auto* cHi = highShelfPerChannel[ci].coefficients.get();
+    const float mag = eqFourBandPinkRmsMagLinear(sampleRate, cLo, cM1, cM2, cHi);
+    const float inv = 1.f / juce::jmax(1.0e-12f, mag);
+    return juce::jlimit(1.0e-4f, 1.0e4f, inv);
+}
+
 void ParaEQ301AudioProcessor::updateRoastShelfFilters(double sampleRate) noexcept
 {
     const float preDb = apvts.getRawParameterValue("roastPreEmphDb")->load();
@@ -1105,6 +1199,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float stereoRad = stereoDeg * kTwoPi / 360.f;
 
     const bool anyLfo = (dHiG + dHiC + dM1G + dM1C + dM1B + dM2G + dM2C + dM2B + dLoG + dLoC) > 1.0e-6f;
+    const bool eqPinkBalOn = apvts.getRawParameterValue("eqPinkLevelBal")->load() > 0.5f;
+    std::array<float, 4> eqPinkGain { { 1.f, 1.f, 1.f, 1.f } };
 
     const float rHi = apvts.getRawParameterValue("lfoHiRate")->load() / static_cast<float>(sr);
     const float rM1 = apvts.getRawParameterValue("lfoM1Rate")->load() / static_cast<float>(sr);
@@ -1138,6 +1234,21 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
 
     const int coeffChannels = juce::jmax(1, numCh);
     const int specStride = juce::jmax(1, spectrumStride);
+
+    if (eqPinkBalOn)
+    {
+        for (int ch = 0; ch < coeffChannels; ++ch)
+            eqPinkGain[(size_t) ch] = computeEqFourBandPinkLevelCompensation(sr, ch);
+    }
+
+    const float thrill1Spec = apvts.getRawParameterValue("thrill1Spec")->load();
+    const float thrill1ThreshDb = apvts.getRawParameterValue("thrill1ThreshDb")->load();
+    const float thrill1Ratio = apvts.getRawParameterValue("thrill1Ratio")->load();
+    const float thrill2Spec = apvts.getRawParameterValue("thrill2Spec")->load();
+    const float thrill2ThreshDb = apvts.getRawParameterValue("thrill2ThreshDb")->load();
+    const float thrill2Ratio = apvts.getRawParameterValue("thrill2Ratio")->load();
+    thrillMe1.updateSpectralCoeffs(sr, thrill1Spec);
+    thrillMe2.updateSpectralCoeffs(sr, thrill2Spec);
 
     for (int n = 0; n < numSamps; ++n)
     {
@@ -1174,6 +1285,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     const float loGain = modGainDb(baseLoG, sLo, dLoG);
 
                     updateFiltersForChannel(ch, sr, loCf, loGain, m1f, m1bw, m1g, m2f, m2bw, m2g, hiCf, hiGain);
+                    if (eqPinkBalOn)
+                        eqPinkGain[(size_t) ch] = computeEqFourBandPinkLevelCompensation(sr, ch);
                     publishMotionEqUiSnapshot(ch, hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
                     if (coeffChannels < 2 && ch == 0)
                         publishMotionEqUiSnapshot(1, hiCf, hiGain, m1f, m1bw, m1g, m2f, m2bw, m2g, loCf, loGain, true);
@@ -1193,6 +1306,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 x = mid1PeakPerChannel[i].processSample(x);
                 x = mid2PeakPerChannel[i].processSample(x);
                 x = highShelfPerChannel[i].processSample(x);
+                if (eqPinkBalOn)
+                    x *= eqPinkGain[i];
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
@@ -1258,7 +1373,10 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
             float effPre = bypass1 ? 0.0f : juce::jlimit(0.0f, 1.0f, coreDrive * mPre * trackMul * flutterMul * envMul);
             float effPost = bypass2 ? 0.0f : juce::jlimit(0.0f, 1.0f, core2Drive * mPost * trackMul * flutterMul * envMul);
 
-            x = applyCoreSaturation(x, effPre, coreDirt, coreCrunch, coreDcPre[i], coreDcLeakCoeffProc);
+            {
+                const float wet1 = thrillMe1.processChannel(ch, x, thrill1ThreshDb, thrill1Ratio);
+                x = (1.f - effPre) * x + effPre * wet1;
+            }
             const float beforeEq = x;
             x = lowShelfPerChannel[i].processSample(x);
             if (roastLowChainAmt > 1.0e-6f)
@@ -1296,12 +1414,17 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 }
                 x += wet;
             }
-            x = applyCoreSaturation(x, effPost, coreDirt, coreCrunch, coreDcPost[i], coreDcLeakCoeffProc);
+            {
+                const float wet2 = thrillMe2.processChannel(ch, x, thrill2ThreshDb, thrill2Ratio);
+                x = (1.f - effPost) * x + effPost * wet2;
+            }
             if (useRoastPostShelf)
                 x = roastPostHighShelf[i].processSample(x);
             x = applyRoastLoFi(x, roastLoFiAmt, roastLoFiCounter[i], roastLoFiHold[i], roastLoFiDown);
             x = applyRoastGlue(x, roastGlueAmt, roastGlueEnv[i], roastGlueDecayProc);
             x *= 1.f + roastRingAmt * 0.38f * std::sin(roastRingPhase + (float) ch * 0.7f);
+            if (eqPinkBalOn)
+                x *= eqPinkGain[i];
             if (!std::isfinite(x))
                 x = 0.0f;
             data[n] = x;
@@ -1351,6 +1474,13 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const double srHost = getSampleRate() > 0.0 ? getSampleRate() : currentSampleRate;
     const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
     const int numSamps = buffer.getNumSamples();
+
+    if (numCh > 0 && numSamps > 0
+        && dryMixScratch.getNumChannels() >= numCh && dryMixScratch.getNumSamples() >= numSamps)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
+            dryMixScratch.copyFrom(ch, 0, buffer, ch, 0, numSamps);
+    }
 
     const float inRms = blockRms(buffer, numCh, numSamps);
 
@@ -1420,6 +1550,21 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         {
             if (!std::isfinite(data[n]))
                 data[n] = 0.f;
+        }
+    }
+
+    const float mixWet = apvts.getRawParameterValue("masterDryWet")->load();
+    if (mixWet < 0.9995f && numCh > 0 && numSamps > 0
+        && dryMixScratch.getNumChannels() >= numCh && dryMixScratch.getNumSamples() >= numSamps)
+    {
+        const float w = juce::jlimit(0.f, 1.f, mixWet);
+        const float dryG = 1.f - w;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* wet = buffer.getWritePointer(ch);
+            const float* dry = dryMixScratch.getReadPointer(ch);
+            for (int n = 0; n < numSamps; ++n)
+                wet[n] = dryG * dry[n] + w * wet[n];
         }
     }
 
@@ -1594,6 +1739,12 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         apvtsSetFloatPlain(ap, "anharmMix", 0.f);
         apvtsSetFloatPlain(ap, "anharmNl", 0.f);
         apvtsSetFloatPlain(ap, "anharmEnvQ", 0.35f);
+        apvtsSetFloatPlain(ap, "thrill1Spec", 0.f);
+        apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);
+        apvtsSetFloatPlain(ap, "thrill1Ratio", 1.f);
+        apvtsSetFloatPlain(ap, "thrill2Spec", 0.f);
+        apvtsSetFloatPlain(ap, "thrill2ThreshDb", 0.f);
+        apvtsSetFloatPlain(ap, "thrill2Ratio", 1.f);
     };
 
     auto flatEq = [&]()

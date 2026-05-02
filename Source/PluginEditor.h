@@ -40,6 +40,9 @@ private:
     juce::Rectangle<int> meterInBarBounds;
     juce::Rectangle<int> meterOutBarBounds;
 
+    juce::Slider masterDryWetSlider;
+    juce::Label masterDryWetCaption;
+
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> comboAttachments;

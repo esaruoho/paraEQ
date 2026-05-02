@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "VaNonlinearSvf.h"
 #include "ParametricEqDesign.h"
+#include "ThrillMeTone.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -96,6 +97,9 @@ private:
 
     void updateRoastShelfFilters(double sampleRate) noexcept;
     void updateAnharmonicBank(double sampleRate) noexcept;
+
+    /** ~1 / RMS(|H(f)|) from the four linear EQ bands (pink-energy proxy); unity when flat. Applied after ThrillMe+EQ+roast colour. */
+    float computeEqFourBandPinkLevelCompensation(double sampleRate, int channelIndex) const noexcept;
 
     /** Half-band up/down around the roast + EQ path (cores, SVF, lo-fi, etc.). factorExp 1 = 2×, 2 = 4×. */
     void ensureRoastOversampler(int factorExp, int numCh, int numHostSamples);
@@ -196,6 +200,12 @@ private:
     float roastPunchDecay = 0.f;
     float roastGlueDecay = 0.f;
     float roastDriveEnvCoeff = 0.f;
+
+    ThrillMeTone thrillMe1;
+    ThrillMeTone thrillMe2;
+
+    /** Per-block copy of input for global dry/wet (after full wet chain + limiter). */
+    juce::AudioBuffer<float> dryMixScratch;
 
     int currentFactoryProgram = 0;
 
