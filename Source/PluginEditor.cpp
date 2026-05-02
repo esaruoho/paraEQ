@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -1499,7 +1500,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleToggleDark(eqPinkBalToggle);
         eqPinkBalToggle.setTooltip(
             "When on (default), a gain trim derived from the four linear EQ bands is applied after the full colour path: "
-            "ThrillMe 1 & 2, the four IIR bands, SVF / anharmonic (if on), roast post shelf, lo-fi, glue, and ring — "
+            "ThrillMe 1 & 2, the four IIR bands, SVF / anharmonic / APR (if on), roast post shelf, lo-fi, glue, and ring — "
             "so big EQ boosts do not stack as much extra loudness through that chain. Turn off for classic raw dB behaviour.");
         addAndMakeVisible(eqPinkBalToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "eqPinkLevelBal", eqPinkBalToggle));
@@ -2226,7 +2227,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     {
         styleLabelDark(programLabel, "Factory preset", true);
         addAndMakeVisible(programLabel);
-        programBox.setTooltip("Built-in snapshots (Init, roast stacks, Motion, linear A/B). Host preset save still stores full APVTS.");
+        programBox.setTooltip("Built-in snapshots (Init, roast, Motion, linear A/B, anharm, APR by source). Host preset save still stores full APVTS.");
         addAndMakeVisible(programBox);
         for (int i = 0; i < ParaEQ301AudioProcessor::kNumFactoryPrograms; ++i)
             programBox.addItem(proc.getProgramName(i), i + 1);
@@ -2752,6 +2753,455 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabScrollHost : public juce::Viewpor
     std::unique_ptr<AnharmTabContent> content;
 };
 
+struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Component
+{
+    juce::Label intro;
+    juce::ToggleButton aprEnableToggle { "Autoparametric resonator" };
+    juce::Slider aprMix;
+    juce::Label aprMixL;
+    juce::Slider aprBaseHz;
+    juce::Label aprBaseHzL;
+    juce::Slider aprQ;
+    juce::Label aprQL;
+    juce::Slider aprPumpHz;
+    juce::Label aprPumpHzL;
+    juce::Slider aprPumpDepth;
+    juce::Label aprPumpDepthL;
+    juce::Slider aprAutoTrack;
+    juce::Label aprAutoTrackL;
+    juce::Slider aprDrive;
+    juce::Label aprDriveL;
+
+    static void placeWideSliderRow(juce::Rectangle<int>& area, juce::Label& cap, juce::Slider& sl, int rowH, int labelColW)
+    {
+        auto row = area.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY() + (rowH - 14) / 2, labelColW, 14);
+        const int slX = row.getX() + labelColW + 8;
+        sl.setBounds(slX, row.getY(), juce::jmax(160, row.getRight() - slX), rowH);
+    }
+
+    ParametricTabContent(juce::AudioProcessorValueTreeState& ap,
+                         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+    {
+        styleLabelDark(intro,
+                       "Inspired by classical parametric excitation (e.g. Mandelstam–Papaleksi–type analyses of periodic parameter variation in "
+                       "resonant systems, 1930s): a VA bandpass whose centre frequency is nudged by an envelope follower and by a slow sinusoidal "
+                       "\"pump\". Inserted after the inharmonic bank, before ThrillMe 2. Not a circuit model — a stable musical resonator.",
+                       true);
+        intro.setJustificationType(juce::Justification::topLeft);
+        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        addAndMakeVisible(intro);
+
+        styleToggleDark(aprEnableToggle);
+        aprEnableToggle.setTooltip("Enable autoparametric resonator (parallel bandpass add into the hot path).");
+        addAndMakeVisible(aprEnableToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "aprEnable", aprEnableToggle));
+
+        auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        };
+
+        wirePct(aprMix, aprMixL, "aprMix", "Mix %", "Parallel wet of the resonator bandpass.");
+
+        styleLinearSliderCompact(aprBaseHz, kAccentBlue);
+        styleLabelDark(aprBaseHzL, "Base Hz", true);
+        addAndMakeVisible(aprBaseHz);
+        addAndMakeVisible(aprBaseHzL);
+        aprBaseHz.setTooltip("Resonator centre frequency before auto-tracking and pump modulation.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "aprBaseHz", aprBaseHz));
+        aprBaseHz.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " Hz"; };
+        aprBaseHz.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(aprQ, kAccentGreen);
+        styleLabelDark(aprQL, "Q", true);
+        addAndMakeVisible(aprQ);
+        addAndMakeVisible(aprQL);
+        aprQ.setTooltip("Resonator bandwidth (higher = narrower peak).");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "aprQ", aprQ));
+        aprQ.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+        aprQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(aprPumpHz, kAccentBlue);
+        styleLabelDark(aprPumpHzL, "Pump Hz", true);
+        addAndMakeVisible(aprPumpHz);
+        addAndMakeVisible(aprPumpHzL);
+        aprPumpHz.setTooltip("Rate of sinusoidal modulation of effective centre frequency (parametric-style pumping).");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "aprPumpHz", aprPumpHz));
+        aprPumpHz.textFromValueFunction = [](double v) { return juce::String(v, 2) + " Hz"; };
+        aprPumpHz.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        wirePct(aprPumpDepth, aprPumpDepthL, "aprPumpDepth", "Pump depth %", "Depth of pump modulation around the tracked centre frequency.");
+        wirePct(aprAutoTrack, aprAutoTrackL, "aprAutoTrack", "Auto track %", "How strongly smoothed |x| shifts centre frequency upward when the band is loud.");
+        wirePct(aprDrive, aprDriveL, "aprDrive", "Drive %", "Nonlinear bandpass loop drive (amplitude-dependent resonance limiting).");
+    }
+
+    ~ParametricTabContent() override
+    {
+        for (auto* s : { &aprMix, &aprBaseHz, &aprQ, &aprPumpHz, &aprPumpDepth, &aprAutoTrack, &aprDrive })
+            s->setLookAndFeel(nullptr);
+    }
+
+    int getMinimumContentHeight() const noexcept
+    {
+        constexpr int kOuterPad = 16;
+        constexpr int kIntroMax = 120;
+        constexpr int kAfterIntro = 6 + 26 + 6;
+        constexpr int kRowH = 32;
+        constexpr int kParamRows = 7;
+        return kOuterPad + kIntroMax + kAfterIntro + kParamRows * kRowH + 10;
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(8);
+        const int introW = juce::jmax(1, b.getWidth());
+        juce::AttributedString introCopy(intro.getText(true));
+        introCopy.setFont(intro.getFont());
+        introCopy.setColour(intro.findColour(juce::Label::textColourId));
+        juce::TextLayout introLayout;
+        introLayout.createLayout(introCopy, (float) introW);
+        const int introH = juce::jlimit(40, 140, juce::roundToInt(introLayout.getHeight()) + 10);
+        intro.setBounds(b.removeFromTop(introH));
+        b.removeFromTop(6);
+        auto toggles = b.removeFromTop(26);
+        aprEnableToggle.setBounds(toggles.removeFromLeft(280));
+        b.removeFromTop(6);
+        constexpr int kParamRows = 7;
+        constexpr int kRowH = 32;
+        const int paramNeed = kParamRows * kRowH;
+        int bodyH = juce::jmax(1, b.getHeight());
+        if (bodyH > paramNeed)
+            b.removeFromBottom(bodyH - paramNeed);
+        bodyH = juce::jmax(1, b.getHeight());
+        const int rowH = juce::jmin(kRowH, juce::jmax(20, bodyH / kParamRows));
+        const int labelColW = juce::jlimit(120, 188, b.getWidth() / 3);
+
+        placeWideSliderRow(b, aprMixL, aprMix, rowH, labelColW);
+        placeWideSliderRow(b, aprBaseHzL, aprBaseHz, rowH, labelColW);
+        placeWideSliderRow(b, aprQL, aprQ, rowH, labelColW);
+        placeWideSliderRow(b, aprPumpHzL, aprPumpHz, rowH, labelColW);
+        placeWideSliderRow(b, aprPumpDepthL, aprPumpDepth, rowH, labelColW);
+        placeWideSliderRow(b, aprAutoTrackL, aprAutoTrack, rowH, labelColW);
+        placeWideSliderRow(b, aprDriveL, aprDrive, rowH, labelColW);
+    }
+};
+
+struct ParaEQ301AudioProcessorEditor::ParametricTabScrollHost : public juce::Viewport
+{
+    explicit ParametricTabScrollHost(juce::AudioProcessorValueTreeState& ap,
+                                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+        : content(std::make_unique<ParametricTabContent>(ap, atts, batts))
+    {
+        setViewedComponent(content.get(), false);
+        setScrollBarsShown(true, false);
+        setScrollBarThickness(9);
+    }
+
+    void resized() override
+    {
+        const int w = juce::jmax(1, getWidth());
+        const int h = juce::jmax(1, getHeight());
+        const int minH = content->getMinimumContentHeight();
+        content->setBounds(0, 0, w, juce::jmax(h, minH));
+        juce::Viewport::resized();
+    }
+
+    std::unique_ptr<ParametricTabContent> content;
+};
+
+struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
+{
+    juce::Label intro;
+    juce::Label shaperModeL;
+    juce::ComboBox shaperModeBox;
+    juce::Slider shaperMix;
+    juce::Label shaperMixL;
+    juce::Slider shaperPreGain;
+    juce::Label shaperPreGainL;
+    juce::Slider shaperPostTrim;
+    juce::Label shaperPostTrimL;
+    juce::Label magnetHead;
+    juce::Slider magDrive;
+    juce::Label magDriveL;
+    juce::Slider magTilt;
+    juce::Label magTiltL;
+    juce::Slider magBias;
+    juce::Label magBiasL;
+    juce::Slider magTiltLimit;
+    juce::Label magTiltLimitL;
+    juce::Slider magFeedback;
+    juce::Label magFeedbackL;
+    juce::Slider magOut;
+    juce::Label magOutL;
+    juce::Label chebyHead;
+    juce::Slider chebyHarmMacro;
+    juce::Label chebyHarmMacroL;
+    juce::ToggleButton chebyDetailToggle { "Show H2–H13 detail sliders" };
+    juce::Slider chebyYL;
+    juce::Label chebyYLL;
+    juce::Slider chebyYC;
+    juce::Label chebyYCL;
+    juce::Slider chebyYR;
+    juce::Label chebyYRL;
+    std::array<juce::Slider, 12> chebyH {};
+    std::array<juce::Label, 12> chebyHL {};
+
+    static void placeWideSliderRow(juce::Rectangle<int>& area, juce::Label& cap, juce::Slider& sl, int rowH, int labelColW)
+    {
+        auto row = area.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY() + (rowH - 14) / 2, labelColW, 14);
+        const int slX = row.getX() + labelColW + 8;
+        sl.setBounds(slX, row.getY(), juce::jmax(160, row.getRight() - slX), rowH);
+    }
+
+    ShaperTabContent(juce::AudioProcessorValueTreeState& ap,
+                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>&,
+                     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+    {
+        styleLabelDark(intro,
+                       "Paketti-style harmonic shaping (ported from Paketti Chebyshev / Magnet tools): Chebyshev = Bézier pre-curve plus "
+                       "weighted T2–T13 harmonics via a normalized LUT (rebuilt on a background thread; audio falls back to a one-shot sync build if the worker lags). "
+                       "Harmonics macro scales all partial weights together. Magnet = asymmetric soft saturation with feedback and slew. "
+                       "Inserted after ThrillMe 1, before the EQ chain, as parallel harmonic delta (mix × (y−u)). Oversampled host rate widens Magnet slew steps.",
+                       true);
+        intro.setJustificationType(juce::Justification::topLeft);
+        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        addAndMakeVisible(intro);
+
+        styleLabelDark(shaperModeL, "Shaper mode", true);
+        addAndMakeVisible(shaperModeL);
+        shaperModeBox.setTooltip("Off | Magnet (asymmetric sat) | Chebyshev (controlled harmonics).");
+        addAndMakeVisible(shaperModeBox);
+        if (auto* pc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("shaperMode")))
+            shaperModeBox.addItemList(pc->choices, 1);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "shaperMode", shaperModeBox));
+
+        auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        };
+
+        wirePct(shaperMix, shaperMixL, "shaperMix", "Mix %", "Blend of harmonic delta added to the signal.");
+        styleLinearSliderCompact(shaperPreGain, kAccentBlue);
+        styleLabelDark(shaperPreGainL, "Input", true);
+        addAndMakeVisible(shaperPreGain);
+        addAndMakeVisible(shaperPreGainL);
+        shaperPreGain.setTooltip("Gain into the normalized shaper domain before clamp to ±1.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "shaperPreGain", shaperPreGain));
+        shaperPreGain.textFromValueFunction = [](double v) { return juce::String(v, 2) + " x"; };
+        shaperPreGain.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(shaperPostTrim, kAccentBlue);
+        styleLabelDark(shaperPostTrimL, "Trim", true);
+        addAndMakeVisible(shaperPostTrim);
+        addAndMakeVisible(shaperPostTrimL);
+        shaperPostTrim.setTooltip("Gain on (y−u) before applying mix.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "shaperPostTrim", shaperPostTrim));
+        shaperPostTrim.textFromValueFunction = [](double v) { return juce::String(v, 2) + " x"; };
+        shaperPostTrim.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLabelDark(magnetHead, "Magnet", true);
+        magnetHead.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        addAndMakeVisible(magnetHead);
+
+        auto wireMag = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+            s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        };
+        wireMag(magDrive, magDriveL, "magDrive", "Drive", "Exponent base 2^drive into pos/neg softsat gains.");
+        wireMag(magTilt, magTiltL, "magTilt", "Tilt", "Skews tone between positive and negative halves.");
+        wireMag(magBias, magBiasL, "magBias", "Bias", "Asymmetry between positive and negative lobes.");
+        wirePct(magTiltLimit, magTiltLimitL, "magTiltLimit", "Slew %", "Higher = faster slew toward target (less low-pass on motion).");
+        wirePct(magFeedback, magFeedbackL, "magFeedback", "Feedback %", "Feeds previous output into tilt (program-dependent).");
+        wireMag(magOut, magOutL, "magOut", "Out", "Output gain inside Magnet path (before delta trim).");
+
+        styleLabelDark(chebyHead, "Chebyshev curve & harmonics", true);
+        chebyHead.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        addAndMakeVisible(chebyHead);
+
+        wirePct(chebyHarmMacro, chebyHarmMacroL, "chebyHarmMacro", "Harmonics %",
+                 "Scales every H2–H13 weight together (shape from detail sliders, overall amount from here).");
+        styleToggleDark(chebyDetailToggle);
+        chebyDetailToggle.setTooltip("Reveal per-partial sliders. When off, use Harmonics % and the Bézier curve only.");
+        addAndMakeVisible(chebyDetailToggle);
+        chebyDetailToggle.setToggleState(false, juce::dontSendNotification);
+        chebyDetailToggle.onClick = [this]
+        {
+            const bool on = chebyDetailToggle.getToggleState();
+            for (auto& s : chebyH)
+                s.setVisible(on);
+            for (auto& l : chebyHL)
+                l.setVisible(on);
+            resized();
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                vp->resized();
+        };
+        for (auto& s : chebyH)
+            s.setVisible(false);
+        for (auto& l : chebyHL)
+            l.setVisible(false);
+
+        auto wireChebyY = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentBlue);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+            s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        };
+        wireChebyY(chebyYL, chebyYLL, "chebyYL", "Curve L", "Bézier control at x = −1.");
+        wireChebyY(chebyYC, chebyYCL, "chebyYC", "Curve C", "Bézier control at x = 0.");
+        wireChebyY(chebyYR, chebyYRL, "chebyYR", "Curve R", "Bézier control at x = +1.");
+
+        static const char* chebyIds[12] = {
+            "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
+            "chebyH8", "chebyH9", "chebyH10", "chebyH11", "chebyH12", "chebyH13"
+        };
+        for (int i = 0; i < 12; ++i)
+        {
+            styleLinearSliderCompact(chebyH[(size_t) i], kAccentGreen);
+            styleLabelDark(chebyHL[(size_t) i], juce::String("H") + juce::String(i + 2), true);
+            addAndMakeVisible(chebyH[(size_t) i]);
+            addAndMakeVisible(chebyHL[(size_t) i]);
+            chebyH[(size_t) i].setTooltip("Weight for Chebyshev T harmonic (series applied after pre-curve).");
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, chebyIds[i], chebyH[(size_t) i]));
+            chebyH[(size_t) i].textFromValueFunction = [](double v) { return juce::String(v, 3); };
+            chebyH[(size_t) i].valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        }
+    }
+
+    ~ShaperTabContent() override
+    {
+        for (auto* s : { &shaperMix, &shaperPreGain, &shaperPostTrim, &magDrive, &magTilt, &magBias, &magTiltLimit, &magFeedback, &magOut,
+                         &chebyHarmMacro, &chebyYL, &chebyYC, &chebyYR })
+            s->setLookAndFeel(nullptr);
+        chebyDetailToggle.setLookAndFeel(nullptr);
+        for (auto& s : chebyH)
+            s.setLookAndFeel(nullptr);
+    }
+
+    int getMinimumContentHeight() const noexcept
+    {
+        constexpr int kOuterPad = 16;
+        constexpr int kIntroMax = 120;
+        constexpr int kRowH = 32;
+        const int harmRows = chebyDetailToggle.getToggleState() ? 12 : 0;
+        constexpr int kBaseSliderRows = 3 + 6 + 1 + 1 + 3;
+        const int kSliderRows = kBaseSliderRows + harmRows;
+        constexpr int kSectionGap = 2 * 24;
+        return kOuterPad + kIntroMax + 8 + 26 + 6 + kSliderRows * kRowH + kSectionGap + 32;
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(8);
+        const int introW = juce::jmax(1, b.getWidth());
+        juce::AttributedString introCopy(intro.getText(true));
+        introCopy.setFont(intro.getFont());
+        introCopy.setColour(intro.findColour(juce::Label::textColourId));
+        juce::TextLayout introLayout;
+        introLayout.createLayout(introCopy, (float) introW);
+        const int introH = juce::jlimit(40, 140, juce::roundToInt(introLayout.getHeight()) + 10);
+        intro.setBounds(b.removeFromTop(introH));
+        b.removeFromTop(8);
+        auto modeRow = b.removeFromTop(26);
+        shaperModeL.setBounds(modeRow.removeFromLeft(100));
+        shaperModeBox.setBounds(modeRow.removeFromLeft(juce::jmin(280, modeRow.getWidth())));
+        b.removeFromTop(6);
+        const bool detailOn = chebyDetailToggle.getToggleState();
+        const int harmRows = detailOn ? 12 : 0;
+        const int kParamRows = 3 + 6 + 1 + 1 + 3 + harmRows;
+        constexpr int kRowH = 32;
+        const int paramNeed = kParamRows * kRowH + 2 * 24;
+        int bodyH = juce::jmax(1, b.getHeight());
+        if (bodyH > paramNeed)
+            b.removeFromBottom(bodyH - paramNeed);
+        bodyH = juce::jmax(1, b.getHeight());
+        const int rowH = juce::jmin(kRowH, juce::jmax(20, bodyH / juce::jmax(1, kParamRows)));
+        const int labelColW = juce::jlimit(120, 188, b.getWidth() / 3);
+
+        placeWideSliderRow(b, shaperMixL, shaperMix, rowH, labelColW);
+        placeWideSliderRow(b, shaperPreGainL, shaperPreGain, rowH, labelColW);
+        placeWideSliderRow(b, shaperPostTrimL, shaperPostTrim, rowH, labelColW);
+        auto mh = b.removeFromTop(22);
+        magnetHead.setBounds(mh.getX(), mh.getY(), 260, 18);
+        placeWideSliderRow(b, magDriveL, magDrive, rowH, labelColW);
+        placeWideSliderRow(b, magTiltL, magTilt, rowH, labelColW);
+        placeWideSliderRow(b, magBiasL, magBias, rowH, labelColW);
+        placeWideSliderRow(b, magTiltLimitL, magTiltLimit, rowH, labelColW);
+        placeWideSliderRow(b, magFeedbackL, magFeedback, rowH, labelColW);
+        placeWideSliderRow(b, magOutL, magOut, rowH, labelColW);
+        auto ch = b.removeFromTop(22);
+        chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
+        placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
+        auto detRow = b.removeFromTop(28);
+        chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
+        placeWideSliderRow(b, chebyYLL, chebyYL, rowH, labelColW);
+        placeWideSliderRow(b, chebyYCL, chebyYC, rowH, labelColW);
+        placeWideSliderRow(b, chebyYRL, chebyYR, rowH, labelColW);
+        if (detailOn)
+            for (int i = 0; i < 12; ++i)
+                placeWideSliderRow(b, chebyHL[(size_t) i], chebyH[(size_t) i], rowH, labelColW);
+    }
+};
+
+struct ParaEQ301AudioProcessorEditor::ShaperTabScrollHost : public juce::Viewport
+{
+    explicit ShaperTabScrollHost(juce::AudioProcessorValueTreeState& ap,
+                                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+        : content(std::make_unique<ShaperTabContent>(ap, atts, batts, comboAtts))
+    {
+        setViewedComponent(content.get(), false);
+        setScrollBarsShown(true, false);
+        setScrollBarThickness(9);
+    }
+
+    void resized() override
+    {
+        const int w = juce::jmax(1, getWidth());
+        const int h = juce::jmax(1, getHeight());
+        const int minH = content->getMinimumContentHeight();
+        content->setBounds(0, 0, w, juce::jmax(h, minH));
+        juce::Viewport::resized();
+    }
+
+    std::unique_ptr<ShaperTabContent> content;
+};
+
 struct ParaEQ301AudioProcessorEditor::CurveMotionTabContent : public juce::Component
 {
     explicit CurveMotionTabContent(ParaEQ301AudioProcessor& processor)
@@ -2776,13 +3226,17 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     eqTabScroll = std::make_unique<EqTabScrollHost>(proc, ap, attachments, buttonAttachments);
     curveMotionPage = std::make_unique<CurveMotionTabContent>(proc);
     roastTabScroll = std::make_unique<RoastTabScrollHost>(proc, ap, attachments, buttonAttachments, comboAttachments);
+    shaperTabScroll = std::make_unique<ShaperTabScrollHost>(ap, attachments, buttonAttachments, comboAttachments);
     anharmTabScroll = std::make_unique<AnharmTabScrollHost>(ap, attachments, buttonAttachments);
+    parametricTabScroll = std::make_unique<ParametricTabScrollHost>(ap, attachments, buttonAttachments);
     outPage = std::make_unique<OutTabContent>(proc, ap, attachments, buttonAttachments);
 
     tabs.addTab("EQ", kPanelBlack, eqTabScroll.get(), false);
     tabs.addTab("Curve", kPanelBlack, curveMotionPage.get(), false);
     tabs.addTab("Roast", kPanelBlack, roastTabScroll.get(), false);
+    tabs.addTab("Shaper", kPanelBlack, shaperTabScroll.get(), false);
     tabs.addTab("Anharm", kPanelBlack, anharmTabScroll.get(), false);
+    tabs.addTab("APR", kPanelBlack, parametricTabScroll.get(), false);
     tabs.addTab("Output", kPanelBlack, outPage.get(), false);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, kPanelBlack);

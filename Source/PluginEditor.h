@@ -23,6 +23,10 @@ private:
     struct AnharmTabContent;
     struct RoastTabScrollHost;
     struct AnharmTabScrollHost;
+    struct ParametricTabContent;
+    struct ParametricTabScrollHost;
+    struct ShaperTabContent;
+    struct ShaperTabScrollHost;
     struct OutTabContent;
 
     ParaEQ301AudioProcessor& proc;
@@ -31,6 +35,8 @@ private:
     std::unique_ptr<CurveMotionTabContent> curveMotionPage;
     std::unique_ptr<RoastTabScrollHost> roastTabScroll;
     std::unique_ptr<AnharmTabScrollHost> anharmTabScroll;
+    std::unique_ptr<ParametricTabScrollHost> parametricTabScroll;
+    std::unique_ptr<ShaperTabScrollHost> shaperTabScroll;
     std::unique_ptr<OutTabContent> outPage;
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };

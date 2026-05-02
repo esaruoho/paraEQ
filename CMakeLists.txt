@@ -72,8 +72,11 @@ juce_generate_juce_header(ParaEQ301)
 target_sources(ParaEQ301
     PRIVATE
         Source/PluginProcessor.cpp
+        Source/ChebyLutBuilder.cpp
         Source/PluginEditor.cpp
-        Source/ParametricEqDesign.h)
+        Source/ParametricEqDesign.h
+        Source/AutoparametricResonator.h
+        Source/PakettiShapers.h)
 
 target_compile_definitions(ParaEQ301
     PUBLIC

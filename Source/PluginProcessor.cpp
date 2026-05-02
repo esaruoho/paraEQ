@@ -549,6 +549,128 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.35f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
+    layout.add(std::make_unique<juce::AudioParameterBool>("aprEnable", "Autoparametric resonator", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprMix", "APR mix",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprBaseHz", "APR base Hz",
+        freqRangeSkewed(60.0f, 8000.0f, 440.0f),
+        440.0f,
+        eqHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprQ", "APR Q",
+        juce::NormalisableRange<float>(0.5f, 40.0f, 0.05f, 0.42f),
+        8.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprPumpHz", "APR pump Hz",
+        juce::NormalisableRange<float>(0.05f, 32.0f, 0.01f, 0.38f),
+        2.2f,
+        lfoRateHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprPumpDepth", "APR pump depth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.35f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprAutoTrack", "APR auto track",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.42f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "aprDrive", "APR drive",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.22f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    juce::StringArray shaperModeItems;
+    shaperModeItems.add("Off");
+    shaperModeItems.add("Magnet");
+    shaperModeItems.add("Chebyshev");
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "shaperMode", "Paketti shaper", shaperModeItems, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "shaperMix", "Shaper mix",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "shaperPreGain", "Shaper input",
+        juce::NormalisableRange<float>(0.25f, 16.0f, 0.01f, 0.35f),
+        3.0f,
+        juce::AudioParameterFloatAttributes().withLabel("x")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "shaperPostTrim", "Shaper trim",
+        juce::NormalisableRange<float>(0.0f, 2.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel("x")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magDrive", "Magnet drive",
+        juce::NormalisableRange<float>(0.0f, 2.5f, 0.01f, 0.5f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magTilt", "Magnet tilt",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magBias", "Magnet bias",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magTiltLimit", "Magnet slew",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.5f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magFeedback", "Magnet FB",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magOut", "Magnet out",
+        juce::NormalisableRange<float>(0.2f, 2.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel("x")));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "chebyYL", "Cheby curve L",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+        -1.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "chebyYC", "Cheby curve C",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "chebyYR", "Cheby curve R",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "chebyHarmMacro", "Cheby harmonics macro",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    static const char* chebyHarmIds[12] = {
+        "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
+        "chebyH8", "chebyH9", "chebyH10", "chebyH11", "chebyH12", "chebyH13"
+    };
+    for (int i = 0; i < 12; ++i)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            chebyHarmIds[i], juce::String("Cheby H") + juce::String(i + 2),
+            juce::NormalisableRange<float>(-1.0f, 1.0f, 0.001f, 0.5f),
+            0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("wt")));
+
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "lfoStereoPhase", "LFO L/R phase",
         juce::NormalisableRange<float>(0.0f, 180.0f, 1.0f),
@@ -605,6 +727,7 @@ ParaEQ301AudioProcessor::ParaEQ301AudioProcessor()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", createParameterLayout())
 {
+    chebyLutBuilder = std::make_unique<ChebyLutBuilder>();
     for (auto& p : motionLfoUiPhase)
         p.store(0.f, std::memory_order_relaxed);
     publishMotionEqUiSnapshot(0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false);
@@ -650,6 +773,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         roastPostHighShelf[si].prepare(spec);
         for (int p = 0; p < kAnharmMaxPartials; ++p)
             anharmPeakPerChannel[si][(size_t) p].prepare(spec);
+        aprResonator[si].prepare(currentSampleRate);
     }
 
     {
@@ -667,6 +791,10 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         coreDcMid[i] = 0.f;
         coreDcLow[i] = 0.f;
         vaSvfPerChannel[i].reset();
+        aprResonator[i].reset();
+        pakettiMagnetState[i].y1 = 0.f;
+        pakettiChebyDcX1[i] = 0.f;
+        pakettiChebyDcY1[i] = 0.f;
         for (int p = 0; p < kAnharmMaxPartials; ++p)
             anharmPeakPerChannel[i][(size_t) p].reset();
         roastPunchEnv[i] = 0.f;
@@ -758,6 +886,15 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         setLatencySamples(0);
     }
     publishEqCurveMagnitudeSnapshot();
+
+    if (chebyLutBuilder != nullptr)
+        chebyLutBuilder->startBuilder();
+}
+
+void ParaEQ301AudioProcessor::releaseResources()
+{
+    if (chebyLutBuilder != nullptr)
+        chebyLutBuilder->stopBuilder();
 }
 
 void ParaEQ301AudioProcessor::publishMotionEqUiSnapshot(int channelIndex, float hiCf, float hiGainDb,
@@ -1150,6 +1287,7 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float roastPunchDecayProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.009)));
     const float roastGlueDecayProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.13)));
     const float roastDriveEnvCoeffProc = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, sr * 0.007)));
+    const float aprEnvCoeffProc = 1.f - static_cast<float>(std::exp(-1.0 / juce::jmax(5.0, sr * 0.014)));
     const float coreDcLeakCoeffProc = 1.0f - std::exp(-kTwoPi * 14.0f / juce::jmax(100.f, srF));
 
     const float roastPunchAmt = apvts.getRawParameterValue("roastPunch")->load();
@@ -1183,6 +1321,15 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     int nAnharmPartials = 4;
     if (auto* pip = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter("anharmPartials")))
         nAnharmPartials = juce::jlimit(2, kAnharmMaxPartials, pip->get());
+
+    const bool aprOn = apvts.getRawParameterValue("aprEnable")->load() > 0.5f;
+    const float aprMix = apvts.getRawParameterValue("aprMix")->load();
+    const float aprBaseHz = apvts.getRawParameterValue("aprBaseHz")->load();
+    const float aprQ = apvts.getRawParameterValue("aprQ")->load();
+    const float aprPumpHz = apvts.getRawParameterValue("aprPumpHz")->load();
+    const float aprPumpDepth = apvts.getRawParameterValue("aprPumpDepth")->load();
+    const float aprAutoTrack = apvts.getRawParameterValue("aprAutoTrack")->load();
+    const float aprDrive = apvts.getRawParameterValue("aprDrive")->load();
 
     const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
     const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
@@ -1249,6 +1396,45 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float thrill2Ratio = apvts.getRawParameterValue("thrill2Ratio")->load();
     thrillMe1.updateSpectralCoeffs(sr, thrill1Spec);
     thrillMe2.updateSpectralCoeffs(sr, thrill2Spec);
+
+    int shaperModeIdx = 0;
+    if (auto* sm = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("shaperMode")))
+        shaperModeIdx = juce::jlimit(0, 2, sm->getIndex());
+    const float shaperMix = apvts.getRawParameterValue("shaperMix")->load();
+    const float shaperPreGain = apvts.getRawParameterValue("shaperPreGain")->load();
+    const float shaperPostTrim = apvts.getRawParameterValue("shaperPostTrim")->load();
+    const float magDrive = apvts.getRawParameterValue("magDrive")->load();
+    const float magTilt = apvts.getRawParameterValue("magTilt")->load();
+    const float magBias = apvts.getRawParameterValue("magBias")->load();
+    const float magTiltLimit = apvts.getRawParameterValue("magTiltLimit")->load();
+    const float magFeedback = apvts.getRawParameterValue("magFeedback")->load();
+    const float magOut = apvts.getRawParameterValue("magOut")->load();
+    const float chebyYL = apvts.getRawParameterValue("chebyYL")->load();
+    const float chebyYC = apvts.getRawParameterValue("chebyYC")->load();
+    const float chebyYR = apvts.getRawParameterValue("chebyYR")->load();
+    const float chebyHarmMacro = apvts.getRawParameterValue("chebyHarmMacro")->load();
+    float harm12[12];
+    static const char* kChebyHarmPid[12] = {
+        "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
+        "chebyH8", "chebyH9", "chebyH10", "chebyH11", "chebyH12", "chebyH13"
+    };
+    for (int hi = 0; hi < 12; ++hi)
+        harm12[(size_t) hi] = apvts.getRawParameterValue(kChebyHarmPid[hi])->load();
+    float harmScaled[12];
+    for (int hi = 0; hi < 12; ++hi)
+        harmScaled[(size_t) hi] = harm12[(size_t) hi] * chebyHarmMacro;
+    const int chebyMaxN = paketti::chebyMaxActiveN(harmScaled);
+    const bool chebyHarmonicsOn = chebyMaxN > 1;
+    const bool chebyCurveDc = paketti::chebyCurveHasDc(chebyYL, chebyYC, chebyYR);
+    const bool shaperEngaged = (!linearListen && shaperModeIdx > 0 && shaperMix > 1.0e-7f
+                                 && ((shaperModeIdx == 1) || (shaperModeIdx == 2 && chebyHarmonicsOn)));
+
+    const float* chebyLutRead = nullptr;
+    if (shaperEngaged && shaperModeIdx == 2 && chebyLutBuilder != nullptr)
+    {
+        const std::uint32_t nh = paketti::hashChebyParams(chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro);
+        chebyLutRead = chebyLutBuilder->resolveLut(nh, chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyLutSyncScratch);
+    }
 
     for (int n = 0; n < numSamps; ++n)
     {
@@ -1377,6 +1563,26 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 const float wet1 = thrillMe1.processChannel(ch, x, thrill1ThreshDb, thrill1Ratio);
                 x = (1.f - effPre) * x + effPre * wet1;
             }
+            if (shaperEngaged)
+            {
+                const float u = juce::jlimit(-1.f, 1.f, x * shaperPreGain);
+                float y = u;
+                if (shaperModeIdx == 1)
+                {
+                    const float osF = (float) juce::jmax(1, specStride);
+                    const float slewStep = paketti::magnetSlewStepFromLimit(magTiltLimit, osF);
+                    y = paketti::magnetProcessSample(u, magDrive, magTilt, magBias, magFeedback, magOut,
+                                                     slewStep, pakettiMagnetState[i]);
+                }
+                else if (shaperModeIdx == 2 && chebyLutRead != nullptr)
+                {
+                    y = paketti::chebyLutEval(chebyLutRead, paketti::kChebyLutPoints, u);
+                }
+                float delta = (y - u) * shaperPostTrim;
+                if (shaperModeIdx == 2 && chebyCurveDc)
+                    delta = paketti::dcBlockIir(delta, pakettiChebyDcX1[i], pakettiChebyDcY1[i]);
+                x += shaperMix * delta;
+            }
             const float beforeEq = x;
             x = lowShelfPerChannel[i].processSample(x);
             if (roastLowChainAmt > 1.0e-6f)
@@ -1413,6 +1619,11 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     wet = std::tanh(t * wet) / t;
                 }
                 x += wet;
+            }
+            if (aprOn && !linearListen && aprMix > 1.0e-7f)
+            {
+                const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
+                x += aprMix * bp;
             }
             {
                 const float wet2 = thrillMe2.processChannel(ch, x, thrill2ThreshDb, thrill2Ratio);
@@ -1702,6 +1913,13 @@ namespace
         if (auto* p = dynamic_cast<juce::AudioParameterInt*>(ap.getParameter(id)))
             p->setValueNotifyingHost(p->convertTo0to1(v));
     }
+
+    void apvtsSetChoiceIndex(juce::AudioProcessorValueTreeState& ap, const char* id, int index)
+    {
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter(id)))
+            if (auto* p = ap.getParameter(id))
+                p->setValueNotifyingHost(c->convertTo0to1(index));
+    }
 }
 
 void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
@@ -1739,6 +1957,28 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         apvtsSetFloatPlain(ap, "anharmMix", 0.f);
         apvtsSetFloatPlain(ap, "anharmNl", 0.f);
         apvtsSetFloatPlain(ap, "anharmEnvQ", 0.35f);
+        apvtsSetBool01(ap, "aprEnable", false);
+        apvtsSetFloatPlain(ap, "aprMix", 0.f);
+        apvtsSetChoiceIndex(ap, "shaperMode", 0);
+        apvtsSetFloatPlain(ap, "shaperMix", 0.f);
+        apvtsSetFloatPlain(ap, "shaperPreGain", 3.f);
+        apvtsSetFloatPlain(ap, "shaperPostTrim", 1.f);
+        apvtsSetFloatPlain(ap, "magDrive", 1.f);
+        apvtsSetFloatPlain(ap, "magTilt", 0.f);
+        apvtsSetFloatPlain(ap, "magBias", 0.f);
+        apvtsSetFloatPlain(ap, "magTiltLimit", 0.5f);
+        apvtsSetFloatPlain(ap, "magFeedback", 0.f);
+        apvtsSetFloatPlain(ap, "magOut", 1.f);
+        apvtsSetFloatPlain(ap, "chebyYL", -1.f);
+        apvtsSetFloatPlain(ap, "chebyYC", 0.f);
+        apvtsSetFloatPlain(ap, "chebyYR", 1.f);
+        apvtsSetFloatPlain(ap, "chebyHarmMacro", 1.f);
+        static const char* zChebyH[12] = {
+            "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
+            "chebyH8", "chebyH9", "chebyH10", "chebyH11", "chebyH12", "chebyH13"
+        };
+        for (const char* hid : zChebyH)
+            apvtsSetFloatPlain(ap, hid, 0.f);
         apvtsSetFloatPlain(ap, "thrill1Spec", 0.f);
         apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);
         apvtsSetFloatPlain(ap, "thrill1Ratio", 1.f);
@@ -1773,6 +2013,18 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         apvtsSetFloatPlain(ap, "lfoM2DepthBw", 0.f);
         apvtsSetFloatPlain(ap, "lfoLoDepthGain", 0.f);
         apvtsSetFloatPlain(ap, "lfoLoDepthCf", 0.f);
+    };
+
+    auto setApr = [&](bool on, float mix, float baseHz, float q, float pumpHz, float pumpDepth, float autoTrack, float drive)
+    {
+        apvtsSetBool01(ap, "aprEnable", on);
+        apvtsSetFloatPlain(ap, "aprMix", mix);
+        apvtsSetFloatPlain(ap, "aprBaseHz", baseHz);
+        apvtsSetFloatPlain(ap, "aprQ", q);
+        apvtsSetFloatPlain(ap, "aprPumpHz", pumpHz);
+        apvtsSetFloatPlain(ap, "aprPumpDepth", pumpDepth);
+        apvtsSetFloatPlain(ap, "aprAutoTrack", autoTrack);
+        apvtsSetFloatPlain(ap, "aprDrive", drive);
     };
 
     switch (index)
@@ -1995,6 +2247,79 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
             apvtsSetFloatPlain(ap, "svfGainDb", 3.f);
             motionOff();
             break;
+        case 10:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.08f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.06f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Cf", 1200.f);
+            apvtsSetFloatPlain(ap, "mid1Bw", 350.f);
+            apvtsSetFloatPlain(ap, "mid1Gain", 2.2f);
+            apvtsSetFloatPlain(ap, "hiGain", 1.2f);
+            motionOff();
+            setApr(true, 0.24f, 2100.f, 11.f, 0.42f, 0.26f, 0.62f, 0.18f);
+            break;
+        case 11:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.18f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.14f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "lowGain", 1.8f);
+            apvtsSetFloatPlain(ap, "mid1Cf", 650.f);
+            apvtsSetFloatPlain(ap, "mid1Bw", 500.f);
+            apvtsSetFloatPlain(ap, "mid1Gain", 1.5f);
+            apvtsSetFloatPlain(ap, "hiGain", -0.8f);
+            motionOff();
+            setApr(true, 0.22f, 480.f, 9.f, 1.35f, 0.32f, 0.52f, 0.3f);
+            break;
+        case 12:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.05f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.04f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "hiGain", -1.2f);
+            apvtsSetFloatPlain(ap, "mid2Gain", 1.f);
+            apvtsSetFloatPlain(ap, "mid2Cf", 900.f);
+            motionOff();
+            setApr(true, 0.32f, 280.f, 14.f, 0.2f, 0.5f, 0.34f, 0.14f);
+            break;
+        case 13:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.12f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.1f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "lowCf", 95.f);
+            apvtsSetFloatPlain(ap, "lowGain", 1.2f);
+            apvtsSetFloatPlain(ap, "hiGain", -1.5f);
+            motionOff();
+            setApr(true, 0.16f, 105.f, 6.5f, 0.38f, 0.2f, 0.46f, 0.28f);
+            break;
+        case 14:
+            apvtsSetBool01(ap, "linearEqListen", false);
+            apvtsSetBool01(ap, "core1Bypass", false);
+            apvtsSetBool01(ap, "core2Bypass", false);
+            zeroRoast();
+            apvtsSetFloatPlain(ap, "coreSat", 0.1f);
+            apvtsSetFloatPlain(ap, "core2Sat", 0.22f);
+            flatEq();
+            apvtsSetFloatPlain(ap, "mid1Cf", 1400.f);
+            apvtsSetFloatPlain(ap, "mid1Bw", 600.f);
+            apvtsSetFloatPlain(ap, "mid1Gain", -1.f);
+            motionOff();
+            setApr(true, 0.38f, 1650.f, 22.f, 5.5f, 0.58f, 0.22f, 0.48f);
+            break;
         default:
             break;
     }
@@ -2023,6 +2348,11 @@ const juce::String ParaEQ301AudioProcessor::getProgramName(int index)
         case 7: return "Anharm shell";
         case 8: return "Bell + partials";
         case 9: return "Anharm + SVF";
+        case 10: return "APR vox";
+        case 11: return "APR drums";
+        case 12: return "APR pads";
+        case 13: return "APR bass";
+        case 14: return "APR foley";
         default: return {};
     }
 }

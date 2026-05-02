@@ -4,6 +4,9 @@
 #include "VaNonlinearSvf.h"
 #include "ParametricEqDesign.h"
 #include "ThrillMeTone.h"
+#include "AutoparametricResonator.h"
+#include "PakettiShapers.h"
+#include "ChebyLutBuilder.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -15,7 +18,7 @@ public:
     ~ParaEQ301AudioProcessor() override = default;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
+    void releaseResources() override;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -29,7 +32,7 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    static constexpr int kNumFactoryPrograms = 10;
+    static constexpr int kNumFactoryPrograms = 15;
 
     int getNumPrograms() override { return kNumFactoryPrograms; }
     int getCurrentProgram() override { return currentFactoryProgram; }
@@ -130,6 +133,13 @@ private:
     std::array<float, 4> anharmSmoothedDrive { {} };
 
     std::array<VaNonlinearSvfChannel, 4> vaSvfPerChannel;
+    std::array<AutoparametricResonatorChannel, 4> aprResonator {};
+
+    std::unique_ptr<ChebyLutBuilder> chebyLutBuilder;
+    std::array<float, paketti::kChebyLutPoints> chebyLutSyncScratch {};
+    std::array<paketti::MagnetShaperState, 4> pakettiMagnetState {};
+    std::array<float, 4> pakettiChebyDcX1 {};
+    std::array<float, 4> pakettiChebyDcY1 {};
 
     juce::dsp::Limiter<float> outputLimiter;
 
