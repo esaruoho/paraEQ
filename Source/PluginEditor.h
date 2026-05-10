@@ -3,6 +3,12 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
+/** Shared by the editor and EQ rotary strip: monospaced numeric readouts, no horizontal glyph stretch. */
+struct PeqPluginSliderValueLookAndFeel : juce::LookAndFeel_V4
+{
+    juce::Label* createSliderTextBox(juce::Slider& slider) override;
+};
+
 class ParaEQ301AudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -29,6 +35,8 @@ private:
     struct ShaperTabScrollHost;
     struct OutTabContent;
 
+    /** Destroyed last among subobjects (declared first): sliders resolve this for value boxes. */
+    PeqPluginSliderValueLookAndFeel pluginSliderValueLf;
     ParaEQ301AudioProcessor& proc;
 
     std::unique_ptr<EqTabScrollHost> eqTabScroll;

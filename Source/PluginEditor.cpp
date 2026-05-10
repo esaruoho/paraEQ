@@ -5,6 +5,29 @@
 #include <cstring>
 #include <vector>
 
+juce::Label* PeqPluginSliderValueLookAndFeel::createSliderTextBox(juce::Slider& slider)
+{
+    auto* l = juce::LookAndFeel_V4::createSliderTextBox(slider);
+    if (l == nullptr)
+        return nullptr;
+    l->setFont(juce::Font(juce::FontOptions()
+                              .withName(juce::Font::getDefaultMonospacedFontName())
+                              .withHeight(11.0f)));
+    l->setMinimumHorizontalScale(1.0f);
+    const auto st = slider.getSliderStyle();
+    if (st == juce::Slider::LinearHorizontal || st == juce::Slider::LinearVertical)
+    {
+        l->setJustificationType(juce::Justification::centredRight);
+        l->setBorderSize(juce::BorderSize<int>(0, 3, 0, 5));
+    }
+    else
+    {
+        l->setJustificationType(juce::Justification::centred);
+        l->setBorderSize(juce::BorderSize<int>(0, 2, 0, 2));
+    }
+    return l;
+}
+
 namespace
 {
     constexpr int kKnobSize = 52;
@@ -33,7 +56,7 @@ namespace
     constexpr int kPeqTabPanelMargin = 8;
 
     /** Max outer height of the EQ tab magnitude panel; Curve tab lower IIR plot uses the same cap for parity. */
-    constexpr int kEqMagGraphMaxOuterH = 200;
+    constexpr int kEqMagGraphMaxOuterH = 158;
 
     /** Invisible hit target so help text lives in tooltips only (saves vertical space). */
     struct TooltipMouseProxy : juce::Component, juce::SettableTooltipClient
@@ -105,7 +128,8 @@ namespace
     void styleLinearSliderCompact(juce::Slider& s, juce::Colour fillCol)
     {
         s.setSliderStyle(juce::Slider::LinearHorizontal);
-        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 18);
+        // Default wide enough for "100 %" + Hz/dB readouts on tabs that forget a follow-up setTextBoxStyle.
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 20);
         s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
         s.setColour(juce::Slider::trackColourId, fillCol.withAlpha(0.85f));
         s.setColour(juce::Slider::thumbColourId, kAccentBlue);
@@ -130,7 +154,7 @@ namespace
     constexpr int kEqSliderColW = 72;
     constexpr int kEqTextBoxW = 66;
     constexpr int kEqBwTextBoxW = 56;
-    constexpr int kEqTextBoxH = 20;
+    constexpr int kEqTextBoxH = 18;
     constexpr int kEqSliderColumnH = kKnobSize + kEqTextBoxH;
     constexpr int kEqRowHeight = kEqSliderColumnH + kGapCaption + kCaptionH;
 
@@ -144,14 +168,14 @@ namespace
     /** Vertical chrome on EQ tab below the graph (shared by resized + minimum scroll height). */
     struct PeqEqTabLayoutMetrics
     {
-        static constexpr int gapAfterGraph = 3;
+        static constexpr int gapAfterGraph = 2;
         static constexpr int motionLineH = 26;
-        static constexpr int gapAfterMotion = 2;
-        static constexpr int coreRowH = 28;
-        static constexpr int coreBetweenRows = 2;
-        static constexpr int thrillRowH = 30;
-        static constexpr int coreToneRowH = 32;
-        static constexpr int gapBeforeBands = 4;
+        static constexpr int gapAfterMotion = 1;
+        static constexpr int coreRowH = 26;
+        static constexpr int coreBetweenRows = 1;
+        static constexpr int thrillRowH = 28;
+        static constexpr int coreToneRowH = 28;
+        static constexpr int gapBeforeBands = 2;
         static constexpr int coreStripH() noexcept
         {
             return coreRowH + coreBetweenRows + thrillRowH + coreBetweenRows + coreRowH + coreBetweenRows + thrillRowH
@@ -159,7 +183,7 @@ namespace
         }
         static constexpr int bandRowsH() noexcept { return 4 * kEqRowHeight; }
         /** Motion overview strip moved to EQ tab (was inside LfoTabContent); stacked LFO body height without that strip. */
-        static constexpr int kEqMotionOverviewRowH() noexcept { return 8 + 20 + 4; }
+        static constexpr int kEqMotionOverviewRowH() noexcept { return 6 + 16 + 2; }
         static constexpr int kLfoMotionStackedBodyMinH() noexcept
         {
             return kLfoMotionPanelMinH() - kEqMotionOverviewRowH();
@@ -176,7 +200,7 @@ namespace
             return gapAfterGraph + motionLineH + gapAfterMotion + coreStripH() + gapBeforeBands + bandMotionPairH();
         }
         /** Minimum total content height when the tab is scrollable (small graph strip + all controls). */
-        static constexpr int minimumContentHeight() noexcept { return chromeBelowGraph() + 24; }
+        static constexpr int minimumContentHeight() noexcept { return chromeBelowGraph() + 16; }
     };
 
     void styleEqSlider(juce::Slider& s, juce::Colour arcFill)
@@ -206,21 +230,21 @@ namespace
         return 0.f;
     }
 
-    /** Wires EQ band value labels: monospace, no horizontal glyph stretch, padding (see styleEqSlider sizing). */
+    /** Rotary strip: custom arc drawing; value box matches global monospace readout policy. */
     struct EqBandLookAndFeel : juce::LookAndFeel_V4
     {
-        juce::Label* createSliderTextBox (juce::Slider& slider) override
+        juce::Label* createSliderTextBox(juce::Slider& slider) override
         {
-            auto* l = juce::LookAndFeel_V4::createSliderTextBox (slider);
-            if ((bool) slider.getProperties()["peqEqBox"])
-            {
-                l->setFont(juce::Font(juce::FontOptions()
-                                          .withName(juce::Font::getDefaultMonospacedFontName())
-                                          .withHeight(11.0f)));
-                l->setMinimumHorizontalScale(1.0f);
-                l->setJustificationType(juce::Justification::centred);
-                l->setBorderSize(juce::BorderSize<int>(0, 2, 0, 2));
-            }
+            auto* l = juce::LookAndFeel_V4::createSliderTextBox(slider);
+            if (l == nullptr)
+                return nullptr;
+            l->setFont(juce::Font(juce::FontOptions()
+                                      .withName(juce::Font::getDefaultMonospacedFontName())
+                                      .withHeight(11.0f)));
+            l->setMinimumHorizontalScale(1.0f);
+            l->setJustificationType(juce::Justification::centred);
+            l->setBorderSize(juce::BorderSize<int>(0, 2, 0, 2));
+            juce::ignoreUnused(slider);
             return l;
         }
 
@@ -290,6 +314,15 @@ namespace
         b.setColour(juce::ToggleButton::textColourId, kTextBright);
         b.setColour(juce::ToggleButton::tickColourId, kAccentGreen);
         b.setColour(juce::ToggleButton::tickDisabledColourId, juce::Colour(0xff666666));
+    }
+
+    void stylePeqComboBox(juce::ComboBox& c)
+    {
+        c.setColour(juce::ComboBox::backgroundColourId, kTextBoxBg);
+        c.setColour(juce::ComboBox::textColourId, kTextBright);
+        c.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff555555));
+        c.setColour(juce::ComboBox::buttonColourId, juce::Colour(0xff2a2a2a));
+        c.setColour(juce::ComboBox::arrowColourId, kTextMuted);
     }
 
     void styleMotionCaption(juce::Label& l, const juce::String& text)
@@ -465,11 +498,11 @@ namespace
     {
         juce::String t;
         if (!s.motionEngaged)
-            t = "Live filter (L) — EQ tab snapshot when Motion is idle.\n";
+            t = "Live filter (L) - EQ tab snapshot when Motion is idle.\n";
         else if (motionEqSnapshotShowsRightSplit(s))
-            t = "Live filter L vs R — dashed tags / curves = R when stereo phase shifts R.\n";
+            t = "Live filter L vs R - dashed tags / curves = R when stereo phase shifts R.\n";
         else
-            t = "Live filter (L) — follows the LFO; EQ knobs track while audio runs.\n";
+            t = "Live filter (L) - follows the LFO; EQ knobs track while audio runs.\n";
         t += appendLiveEqSnapshotNumbers(s);
         return t;
     }
@@ -723,7 +756,7 @@ namespace
         }
     }
 
-    /** One panel: FFT spectrum (pre / post chain, left ch) as a semi-transparent layer, then +/-30 dB EQ IIR (+ mint) on top — same as unified Curve view. */
+    /** One panel: FFT spectrum (pre / post chain, left ch) as a semi-transparent layer, then +/-30 dB EQ IIR (+ mint) on top - same as unified Curve view. */
     void paintMergedSpectrumAndEqInRect(juce::Graphics& g,
                                         juce::Rectangle<int> fullArea,
                                         ParaEQ301AudioProcessor& proc,
@@ -822,7 +855,7 @@ namespace
             peak = juce::jmax(peak, specBefore[(size_t) i], specAfter[(size_t) i]);
         if (!std::isfinite(peak))
             peak = -100.f;
-        // Do not cap top at 0 dB — strong EQ / resonant peaks can read above 0 in this FFT view; without headroom
+        // Do not cap top at 0 dB - strong EQ / resonant peaks can read above 0 in this FFT view; without headroom
         // they pin to the top of the strip ("clip mode"). Keep air above the trace so boosts stay readable.
         constexpr float kSpectrumTopHeadroomDb = 10.f;
         constexpr float kSpectrumSpanDb = 64.f;
@@ -963,23 +996,6 @@ namespace
         g.drawText(leg, graph.getX(), graph.getBottom() + 1, graph.getWidth(), 11, juce::Justification::centred);
     }
 }
-
-/** Monospace value box, scale 1.0 - default LAF horizontally scales label text when the text box is squeezed inside narrow linear sliders. */
-struct PeqLinearToneSliderLf : juce::LookAndFeel_V4
-{
-    juce::Label* createSliderTextBox(juce::Slider& slider) override
-    {
-        juce::ignoreUnused(slider);
-        auto* l = juce::LookAndFeel_V4::createSliderTextBox(slider);
-        l->setFont(juce::Font(juce::FontOptions()
-                                  .withName(juce::Font::getDefaultMonospacedFontName())
-                                  .withHeight(11.0f)));
-        l->setMinimumHorizontalScale(1.0f);
-        l->setJustificationType(juce::Justification::centredRight);
-        l->setBorderSize(juce::BorderSize<int>(0, 3, 0, 5));
-        return l;
-    }
-};
 
 struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, private juce::Timer
 {
@@ -1160,7 +1176,7 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
     {
         if (motionLayoutInterleaved)
         {
-            // EQ tab: one horizontal strip per band — no outer margin here so LFO sits flush after EQ knobs.
+            // EQ tab: one horizontal strip per band - no outer margin here so LFO sits flush after EQ knobs.
             auto b = getLocalBounds();
             Row* rows[4] = { &hi, &m1, &m2, &lo };
             juce::Rectangle<int>* dots[4] = { &lfoDotHi, &lfoDotM1, &lfoDotM2, &lfoDotLo };
@@ -1303,6 +1319,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     juce::Slider coreLifeHz;
     juce::Label coreLifeHzLabel;
     juce::Label motionStatus;
+    juce::ToggleButton lfoHostSyncToggle { "BPM sync" };
+    juce::ComboBox lfoHostSyncDivBox;
     juce::ToggleButton eqPinkBalToggle { "EQ level balance" };
     TooltipMouseProxy motionOverviewHitEq;
     std::unique_ptr<LfoTabContent> lfoStrip;
@@ -1319,7 +1337,6 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     TooltipMouseProxy eqGraphTooltip;
 
     EqBandLookAndFeel eqBandLookAndFeel;
-    PeqLinearToneSliderLf peqLinearToneSliderLf;
 
     int eqSliderGestureDepth = 0;
 
@@ -1418,7 +1435,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     EqTabContent(ParaEQ301AudioProcessor& processor,
                  juce::AudioProcessorValueTreeState& ap,
                  std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
-                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
+                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                 std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
         : proc(processor)
     {
         hi.hasBw = false;
@@ -1488,7 +1506,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         low.gain.setTooltip("How much boost or cut applies in the bass region (0 dB = no change). Negative = gentle low cut.");
 
         motionStatus.setJustificationType(juce::Justification::centredLeft);
-        motionStatus.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+        motionStatus.setFont(juce::Font(juce::FontOptions()
+                                            .withName(juce::Font::getDefaultMonospacedFontName())
+                                            .withHeight(10.0f)));
         motionStatus.setColour(juce::Label::textColourId, kTextBright);
         motionStatus.setMinimumHorizontalScale(0.85f);
         ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot snap0;
@@ -1500,10 +1520,25 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleToggleDark(eqPinkBalToggle);
         eqPinkBalToggle.setTooltip(
             "When on (default), a gain trim derived from the four linear EQ bands is applied after the full colour path: "
-            "ThrillMe 1 & 2, the four IIR bands, SVF, anharmonic bank, roast post shelf, lo-fi, glue, ring — then APR on top (if on) — "
+            "ThrillMe 1 & 2, the four IIR bands, SVF, anharmonic bank, roast post shelf, lo-fi, glue, ring - then APR on top (if on) - "
             "so big EQ boosts do not stack as much extra loudness through that chain. Turn off for classic raw dB behaviour.");
         addAndMakeVisible(eqPinkBalToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "eqPinkLevelBal", eqPinkBalToggle));
+
+        styleToggleDark(lfoHostSyncToggle);
+        lfoHostSyncToggle.setTooltip(
+            "When on, Motion LFO rate follows the host tempo and the division menu (all four bands share one speed; Hz sliders are ignored for rate). "
+            "Requires the transport to supply BPM (often while playing). When off, each band uses its Hz slider.");
+        addAndMakeVisible(lfoHostSyncToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "lfoHostSync", lfoHostSyncToggle));
+
+        lfoHostSyncDivBox.setTooltip("Length of one Motion LFO cycle when BPM sync is on (straight and triplet divisions).");
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("lfoHostSyncDiv")))
+            lfoHostSyncDivBox.addItemList(c->choices, 1);
+        stylePeqComboBox(lfoHostSyncDivBox);
+        addAndMakeVisible(lfoHostSyncDivBox);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "lfoHostSyncDiv", lfoHostSyncDivBox));
+        lfoHostSyncDivBox.setEnabled(ap.getRawParameterValue("lfoHostSync")->load() > 0.5f);
 
         motionOverviewHitEq.setTooltip(
             "Hi / M1 / M2 / Lo rows modulate those EQ bands around the values on the EQ tab (LFO). EQ gain depth up to +/-12 dB around the knob; freq and width sweep similarly. Blue dots = LFO phase.\n\n"
@@ -1542,7 +1577,6 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         core1BypassToggle.setTooltip("Hard-bypass pre-EQ ThrillMe 1 (ignores Mix %). At 0% mix there is no ThrillMe wet anyway. Raising Mix % clears bypass if it was on.");
 
         styleCoreSatWideSlider(coreSat);
-        coreSat.setLookAndFeel(&peqLinearToneSliderLf);
         styleLabel(coreSatLabel, "Mix %");
         addAndMakeVisible(coreSat);
         addAndMakeVisible(coreSatLabel);
@@ -1573,7 +1607,6 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         core2BypassToggle.setTooltip("Hard-bypass post-EQ ThrillMe 2 (ignores Mix %). At 0% mix there is no ThrillMe wet anyway. Raising Mix % clears bypass if it was on.");
 
         styleCoreSatWideSlider(core2Sat);
-        core2Sat.setLookAndFeel(&peqLinearToneSliderLf);
         styleLabel(core2SatLabel, "Mix %");
         addAndMakeVisible(core2Sat);
         addAndMakeVisible(core2SatLabel);
@@ -1603,7 +1636,6 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         {
             styleLinearSliderCompact(s, fill);
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 18);
-            s.setLookAndFeel(&peqLinearToneSliderLf);
             styleLabel(cap, capText);
             addAndMakeVisible(s);
             addAndMakeVisible(cap);
@@ -1616,12 +1648,12 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         thrill1Title.setColour(juce::Label::textColourId, kTextBright.withAlpha(0.85f));
         thrill1Title.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
         addAndMakeVisible(thrill1Title);
-        setupThrillSlider(thrill1Spec, thrill1SpecLabel, "thrill1Spec", "Spec", kAccentGreen,
-                          "Spectral enhancer before the 3-band dynamics (shelves + peaks). Default 0 % with ThrillMe mix at 100 % ≈ pass-through until you raise it.");
-        setupThrillSlider(thrill1Thr, thrill1ThrLabel, "thrill1ThreshDb", "Thr dB", kAccentBlue,
-                          "Multiband threshold (−80…0 dB, skewed like the original exponential law). Lower = more gain reduction. Centre ≈ −22 dB.");
+        setupThrillSlider(thrill1Spec, thrill1SpecLabel, "thrill1Spec", "Spectral", kAccentGreen,
+                          "Spectral enhancer before the 3-band dynamics (shelves + peaks). Same control as the doc's spectral amount (readout is %). Default 50 % travel (original centre).");
+        setupThrillSlider(thrill1Thr, thrill1ThrLabel, "thrill1ThreshDb", "Threshold", kAccentBlue,
+                          "Multiband threshold (-80...0 dB, skewed like the original law). Same control as the doc's threshold (readout is dB). Lower = more gain reduction.");
         setupThrillSlider(thrill1Ratio, thrill1RatioLabel, "thrill1Ratio", "Ratio", kAccentGreen,
-                          "Compression strength like the original 3-knob unit: slider left / high displayed :1 = harder squash; right / low :1 = gentle.");
+                          "Compression strength like the original 3-knob unit: left / high displayed :1 = harder; right / low :1 = gentle. Default is 50 % travel (not max gentle).");
         thrill1Ratio.textFromValueFunction = [](double v)
         {
             const int shown = 129 - juce::jlimit(1, 128, juce::roundToInt(v));
@@ -1649,12 +1681,12 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         thrill2Title.setColour(juce::Label::textColourId, kTextBright.withAlpha(0.85f));
         thrill2Title.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
         addAndMakeVisible(thrill2Title);
-        setupThrillSlider(thrill2Spec, thrill2SpecLabel, "thrill2Spec", "Spec", kAccentGreen,
-                          "Spectral lift before ThrillMe 2 dynamics on the post-EQ path.");
-        setupThrillSlider(thrill2Thr, thrill2ThrLabel, "thrill2ThreshDb", "Thr dB", kAccentBlue,
-                          "Multiband threshold (−80…0 dB, skewed). Lower = more gain reduction.");
+        setupThrillSlider(thrill2Spec, thrill2SpecLabel, "thrill2Spec", "Spectral", kAccentGreen,
+                          "Spectral lift before ThrillMe 2 dynamics on the post-EQ path (doc spectral %). Default 50 % travel like ThrillMe 1.");
+        setupThrillSlider(thrill2Thr, thrill2ThrLabel, "thrill2ThreshDb", "Threshold", kAccentBlue,
+                          "Multiband threshold (-80...0 dB, skewed). Doc threshold control (readout dB). Lower = more gain reduction.");
         setupThrillSlider(thrill2Ratio, thrill2RatioLabel, "thrill2Ratio", "Ratio", kAccentGreen,
-                          "Left / high displayed :1 = harder squash (matches original ThrillMe knob direction).");
+                          "Left / high displayed :1 = harder (original knob direction). Default 50 % travel.");
         thrill2Ratio.textFromValueFunction = thrill1Ratio.textFromValueFunction;
         thrill2Ratio.valueFromTextFunction = thrill1Ratio.valueFromTextFunction;
         thrill2Thr.textFromValueFunction = thrill1Thr.textFromValueFunction;
@@ -1665,11 +1697,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         styleLinearSliderCompact(coreDirt, kAccentGreen);
         coreDirt.setTextBoxStyle(juce::Slider::TextBoxRight, false, 54, 20);
-        coreDirt.setLookAndFeel(&peqLinearToneSliderLf);
         styleLabel(coreDirtLabel, "Dirt");
         addAndMakeVisible(coreDirt);
         addAndMakeVisible(coreDirtLabel);
-        coreDirt.setTooltip("Asymmetric curve for Roast low-chain and mid-chain saturation taps (between EQ bands). Main ThrillMe stages use their own waveshape.");
+        coreDirt.setTooltip("Asymmetric curve for the saturators between EQ bands (Roast Low / Roast Mid on the Roast tab). Not the ThrillMe waveshape. Inactive in Linear EQ only mode.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreDirt", coreDirt));
         coreDirt.textFromValueFunction = [](double v)
         {
@@ -1682,11 +1713,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         styleLinearSliderCompact(coreLifeDepth, kAccentGreen);
         coreLifeDepth.setTextBoxStyle(juce::Slider::TextBoxRight, false, 54, 20);
-        coreLifeDepth.setLookAndFeel(&peqLinearToneSliderLf);
         styleLabel(coreLifeDepthLabel, "Life");
         addAndMakeVisible(coreLifeDepth);
         addAndMakeVisible(coreLifeDepthLabel);
-        coreLifeDepth.setTooltip("Slow breathing of pre- and post-EQ sat amounts (different phase each) for a moving core.");
+        coreLifeDepth.setTooltip("Slow LFO on ThrillMe 1/2 wet amount and on Roast Low/Mid inter-band saturators (different phase pre vs post). Needs Thrill mix and/or Roast Low/Mid raised. Inactive in Linear EQ only mode.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreLifeDepth", coreLifeDepth));
         coreLifeDepth.textFromValueFunction = [](double v)
         {
@@ -1699,11 +1729,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         styleLinearSliderCompact(coreLifeHz, kAccentBlue);
         coreLifeHz.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 20);
-        coreLifeHz.setLookAndFeel(&peqLinearToneSliderLf);
         styleLabel(coreLifeHzLabel, "Life Hz");
         addAndMakeVisible(coreLifeHz);
         addAndMakeVisible(coreLifeHzLabel);
-        coreLifeHz.setTooltip("Rate of the core \"life\" modulation (independent of band Motion LFOs).");
+        coreLifeHz.setTooltip("Rate of the core Life LFO (independent of Motion band LFOs). Inactive in Linear EQ only mode.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreLifeHz", coreLifeHz));
         coreLifeHz.textFromValueFunction = [](double v)
         {
@@ -1757,17 +1786,6 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             if (band->hasBw)
                 band->bw.setLookAndFeel(nullptr);
         }
-        coreSat.setLookAndFeel(nullptr);
-        core2Sat.setLookAndFeel(nullptr);
-        thrill1Spec.setLookAndFeel(nullptr);
-        thrill1Thr.setLookAndFeel(nullptr);
-        thrill1Ratio.setLookAndFeel(nullptr);
-        thrill2Spec.setLookAndFeel(nullptr);
-        thrill2Thr.setLookAndFeel(nullptr);
-        thrill2Ratio.setLookAndFeel(nullptr);
-        coreDirt.setLookAndFeel(nullptr);
-        coreLifeDepth.setLookAndFeel(nullptr);
-        coreLifeHz.setLookAndFeel(nullptr);
     }
 
     void timerCallback() override
@@ -1777,6 +1795,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         proc.getMotionEffectiveEqSnapshot(s);
         motionStatus.setText(buildEqMotionStatusShort(ap, s), juce::dontSendNotification);
         motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, s));
+
+        const bool bpmSyncOn = ap.getRawParameterValue("lfoHostSync")->load() > 0.5f;
+        lfoHostSyncDivBox.setEnabled(bpmSyncOn);
 
         const bool followLive = motionLfoDepthActive(ap) && s.motionEngaged && eqSliderGestureDepth == 0
                                 && !eqTextBoxHasKeyboardFocus();
@@ -1836,6 +1857,24 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             auto balArea = motionRow.removeFromRight(tw);
             const int bcy = balArea.getCentreY() - 11;
             eqPinkBalToggle.setBounds(balArea.getX() + 2, bcy, balArea.getWidth() - 4, 22);
+
+            const int rowCy = motionRow.getCentreY() - 11;
+            int syncW = juce::jlimit(56, 78, motionRow.getWidth() / 7);
+            int divW = juce::jlimit(88, 124, motionRow.getWidth() / 4);
+            const int minStatus = 48;
+            if (syncW + divW + minStatus > motionRow.getWidth())
+            {
+                divW = juce::jmax(72, motionRow.getWidth() - syncW - minStatus);
+                if (divW < 72)
+                {
+                    syncW = juce::jmax(52, motionRow.getWidth() - 72 - minStatus);
+                    divW = juce::jmax(72, motionRow.getWidth() - syncW - minStatus);
+                }
+            }
+            auto syncArea = motionRow.removeFromLeft(syncW);
+            auto divArea = motionRow.removeFromLeft(divW);
+            lfoHostSyncToggle.setBounds(syncArea.getX() + 1, rowCy, juce::jmax(1, syncArea.getWidth() - 2), 22);
+            lfoHostSyncDivBox.setBounds(divArea.reduced(2, 3));
             motionStatus.setBounds(motionRow.reduced(4, 0));
         }
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterMotion);
@@ -1873,7 +1912,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
                 title.setBounds(titleR.getX() + 2, row.getCentreY() - 8, titleR.getWidth() - 2, 16);
                 auto rest = row.reduced(4, 1);
                 const int nCols = 3;
-                const int colW = juce::jmax(52, rest.getWidth() / nCols);
+                // Doc-style labels ("Spectral", "Threshold") need a bit more width than old "Spec" / "Thr dB".
+                const int colW = juce::jmax(64, rest.getWidth() / nCols);
                 auto placeCell = [&](juce::Slider& sl, juce::Label& lab)
                 {
                     auto cell = rest.removeFromLeft(juce::jmin(colW, rest.getWidth()));
@@ -1927,13 +1967,13 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
                                       (int) PeqEqTabLayoutMetrics::kEqMotionOverviewRowH());
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::kEqMotionOverviewRowH());
 
-        constexpr int bandStripW = 80;
-        constexpr int gapAfterBandStrip = 14;
-        constexpr int eqGap = 6;
-        constexpr int kEqMotionColGap = 10;
+        constexpr int bandStripW = 68;
+        constexpr int gapAfterBandStrip = 8;
+        constexpr int eqGap = 5;
+        constexpr int kEqMotionColGap = 6;
         const int step = kEqSliderColW + eqGap;
-        /** Left side through the third EQ knob column (0-based cols 0..2); gain sits in col 2 for peaking, col 1 for shelf. */
-        const int eqKnobsRightX = bandStripW + gapAfterBandStrip + 3 * step + kEqSliderColW;
+        /** Right edge of the widest EQ row (Mid1/Mid2: cf, bw, gain in cols 0..2) measured from bandBounds X. */
+        const int eqKnobsRightX = bandStripW + gapAfterBandStrip + 2 * step + kEqSliderColW;
         /** Same-row Motion only when the remainder fits full-size (78px) LFO columns; otherwise stacked strip below. */
         const int mergedWideMinW = eqKnobsRightX + kEqMotionColGap + kLfoMotionInterleavedMinW();
 
@@ -2002,8 +2042,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabScrollHost : public juce::Viewport
     explicit EqTabScrollHost(ParaEQ301AudioProcessor& processor,
                              juce::AudioProcessorValueTreeState& ap,
                              std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
-                             std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
-        : content(std::make_unique<EqTabContent>(processor, ap, atts, batts))
+                             std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                             std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+        : content(std::make_unique<EqTabContent>(processor, ap, atts, batts, comboAtts))
     {
         setViewedComponent(content.get(), false);
         setScrollBarsShown(true, false);
@@ -2216,7 +2257,6 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     juce::Label svfGainDbL;
 
     ParaEQ301AudioProcessor& proc;
-    PeqLinearToneSliderLf roastValueLf;
 
     static void placeRow(juce::Rectangle<int>& col, juce::Label& cap, juce::Slider& sl, int rowH)
     {
@@ -2257,17 +2297,19 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 
         styleToggleDark(linearEqToggle);
         linearEqToggle.setTooltip(
-            "Bypass ThrillMe, cores, shaper, SVF, anharmonic bank, and the rest of the roast chain — only the four RBJ bands (+ pink balance) stay. "
+            "Bypass ThrillMe, cores, shaper, SVF, anharmonic bank, and the rest of the roast chain - only the four RBJ bands (+ pink balance) stay. "
             "APR still runs after those bands so the APR tab always affects audio.");
         addAndMakeVisible(linearEqToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "linearEqListen", linearEqToggle));
 
         styleLabelDark(intro,
                        "Crunch / roast: pre HF -> cores -> low/mid taps (Roast core flavour shapes those taps) -> linear EQ -> nonlinear SVF (parallel BP) -> core 2 -> post tilt -> lo-fi -> glue -> ring. "
-                       "Boost track follows Motion when engaged. Optional sidechain bus: future.",
+                       "Boost track follows Motion when engaged.",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
-        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        intro.setFont(juce::Font(juce::FontOptions()
+                                     .withName(juce::Font::getDefaultMonospacedFontName())
+                                     .withHeight(11.0f)));
         addAndMakeVisible(intro);
 
         auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
@@ -2369,7 +2411,6 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         auto styleRoastValueBox = [&](juce::Slider& s, int boxW)
         {
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kRoastValH);
-            s.setLookAndFeel(&roastValueLf);
         };
         for (auto* s : { &coreCrunch,
                          &roastPreEmphDb,
@@ -2391,30 +2432,6 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         styleRoastValueBox(svfCf, kRoastHzW);
         styleRoastValueBox(svfQ, kRoastValW);
         styleRoastValueBox(svfGainDb, kRoastValW);
-    }
-
-    ~RoastTabContent() override
-    {
-        for (auto* s : { &coreCrunch,
-                         &roastPreEmphDb,
-                         &roastPostTiltDb,
-                         &roastBoostTrack,
-                         &roastMidChain,
-                         &roastLowChain,
-                         &roastPunch,
-                         &roastGlue,
-                         &roastLoFi,
-                         &roastRing,
-                         &roastEnvDrive,
-                         &roastFlutter,
-                         &roastStereoWide,
-                         &roastOutputTrimDb,
-                         &svfMix,
-                         &svfCf,
-                         &svfQ,
-                         &svfDrive,
-                         &svfGainDb })
-            s->setLookAndFeel(nullptr);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
@@ -2534,7 +2551,6 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     juce::Label anharmFundL;
     juce::Slider anharmB;
     juce::Label anharmBL;
-    PeqLinearToneSliderLf anharmLinearValueLf;
     juce::Slider anharmPartials;
     juce::Label anharmPartialsL;
     juce::Slider anharmMix;
@@ -2567,7 +2583,9 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
                        "3) Level-dependent Q + wet tanh: env->Q widens peaks when signal is hot; Anharm wet sat soft-limits the bank sum.",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
-        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        intro.setFont(juce::Font(juce::FontOptions()
+                                     .withName(juce::Font::getDefaultMonospacedFontName())
+                                     .withHeight(11.0f)));
         addAndMakeVisible(intro);
 
         styleToggleDark(univBellToggle);
@@ -2585,7 +2603,6 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         auto styleAnharmValueBox = [&](juce::Slider& s)
         {
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, kAnharmValueBoxW, kAnharmValueBoxH);
-            s.setLookAndFeel(&anharmLinearValueLf);
         };
 
         auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
@@ -2658,19 +2675,6 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
 
         wirePct(anharmNl, anharmNlL, "anharmNl", "Wet sat %", "tanh on the summed bank injection - amplitude-dependent narrowing of large resonant adds.");
         wirePct(anharmEnvQ, anharmEnvQL, "anharmEnvQ", "Env->Q %", "Follower on |x| lowers effective Q when the band is driven (anharmonic resonance curve).");
-    }
-
-    ~AnharmTabContent() override
-    {
-        for (auto* s : { &anharmFund,
-                          &anharmB,
-                          &anharmPartials,
-                          &anharmMix,
-                          &anharmPerDb,
-                          &anharmQ,
-                          &anharmNl,
-                          &anharmEnvQ })
-            s->setLookAndFeel(nullptr);
     }
 
     int getMinimumContentHeight() const noexcept
@@ -2806,10 +2810,12 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
                          std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
     {
         styleLabelDark(intro,
-                       "Parallel bandpass resonator — last in the roast chain (after ring / pink balance), and last in Linear EQ only mode too (after the four bands + pink).",
+                       "Parallel bandpass resonator: last in the roast chain (after ring / pink balance), and last in Linear EQ only mode too (after the four bands + pink).",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
-        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        intro.setFont(juce::Font(juce::FontOptions()
+                                     .withName(juce::Font::getDefaultMonospacedFontName())
+                                     .withHeight(11.0f)));
         addAndMakeVisible(intro);
 
         styleToggleDark(aprEnableToggle);
@@ -2844,7 +2850,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         styleLabelDark(aprQL, "Q", true);
         addAndMakeVisible(aprQ);
         addAndMakeVisible(aprQL);
-        aprQ.setTooltip("Bandwidth (higher Q = narrower peak). Very high Q only passes a thin slice of spectrum — set Base Hz near strong content in the source, or expect a subtle tail.");
+        aprQ.setTooltip("Bandwidth (higher Q = narrower peak). Very high Q only passes a thin slice of spectrum - set Base Hz near strong content in the source, or expect a subtle tail.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "aprQ", aprQ));
         aprQ.textFromValueFunction = [](double v) { return juce::String(v, 2); };
         aprQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
@@ -2861,12 +2867,22 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         wirePct(aprPumpDepth, aprPumpDepthL, "aprPumpDepth", "Pump depth %", "Depth of pump modulation around the tracked centre frequency.");
         wirePct(aprAutoTrack, aprAutoTrackL, "aprAutoTrack", "Auto track %", "How strongly smoothed |x| shifts centre frequency upward when the band is loud.");
         wirePct(aprDrive, aprDriveL, "aprDrive", "Drive %", "Nonlinear bandpass loop drive (amplitude-dependent resonance limiting).");
-    }
 
-    ~ParametricTabContent() override
-    {
-        for (auto* s : { &aprMix, &aprBaseHz, &aprQ, &aprPumpHz, &aprPumpDepth, &aprAutoTrack, &aprDrive })
-            s->setLookAndFeel(nullptr);
+        constexpr int kAprValH = 20;
+        constexpr int kAprHzBoxW = 92;   // e.g. "8000 Hz"
+        constexpr int kAprPctBoxW = 58;  // "100 %"
+        constexpr int kAprQBoxW = 66;  // "40.00" at high Q
+        auto styleAprReadout = [&](juce::Slider& s, int boxW)
+        {
+            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kAprValH);
+        };
+        styleAprReadout(aprMix, kAprPctBoxW);
+        styleAprReadout(aprBaseHz, kAprHzBoxW);
+        styleAprReadout(aprQ, kAprQBoxW);
+        styleAprReadout(aprPumpHz, kAprHzBoxW);
+        styleAprReadout(aprPumpDepth, kAprPctBoxW);
+        styleAprReadout(aprAutoTrack, kAprPctBoxW);
+        styleAprReadout(aprDrive, kAprPctBoxW);
     }
 
     int getMinimumContentHeight() const noexcept
@@ -2967,7 +2983,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     juce::Label chebyHead;
     juce::Slider chebyHarmMacro;
     juce::Label chebyHarmMacroL;
-    juce::ToggleButton chebyDetailToggle { "Show H2–H13 detail sliders" };
+    juce::ToggleButton chebyDetailToggle { "Show H2-H13 detail sliders" };
     juce::Slider chebyYL;
     juce::Label chebyYLL;
     juce::Slider chebyYC;
@@ -2991,13 +3007,15 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
                      std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
     {
         styleLabelDark(intro,
-                       "Paketti-style harmonic shaping (ported from Paketti Chebyshev / Magnet tools): Chebyshev = Bézier pre-curve plus "
-                       "weighted T2–T13 harmonics via a normalized LUT (rebuilt on a background thread; audio falls back to a one-shot sync build if the worker lags). "
+                       "Paketti-style harmonic shaping (ported from Paketti Chebyshev / Magnet tools): Chebyshev = Bezier pre-curve plus "
+                       "weighted T2-T13 harmonics via a normalized LUT (rebuilt on a background thread; audio falls back to a one-shot sync build if the worker lags). "
                        "Harmonics macro scales all partial weights together. Magnet = asymmetric soft saturation with feedback and slew. "
-                       "Inserted after ThrillMe 1, before the EQ chain, as parallel harmonic delta (mix × (y−u)). Oversampled host rate widens Magnet slew steps.",
+                       "Inserted after ThrillMe 1, before the EQ chain, as parallel harmonic delta (mix times (y - u)). Oversampled host rate widens Magnet slew steps.",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
-        intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        intro.setFont(juce::Font(juce::FontOptions()
+                                     .withName(juce::Font::getDefaultMonospacedFontName())
+                                     .withHeight(11.0f)));
         addAndMakeVisible(intro);
 
         styleLabelDark(shaperModeL, "Shaper mode", true);
@@ -3034,7 +3052,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         styleLabelDark(shaperPostTrimL, "Trim", true);
         addAndMakeVisible(shaperPostTrim);
         addAndMakeVisible(shaperPostTrimL);
-        shaperPostTrim.setTooltip("Gain on (y−u) before applying mix.");
+        shaperPostTrim.setTooltip("Gain on (y-u) before applying mix.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "shaperPostTrim", shaperPostTrim));
         shaperPostTrim.textFromValueFunction = [](double v) { return juce::String(v, 2) + " x"; };
         shaperPostTrim.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
@@ -3066,9 +3084,9 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         addAndMakeVisible(chebyHead);
 
         wirePct(chebyHarmMacro, chebyHarmMacroL, "chebyHarmMacro", "Harmonics %",
-                 "Scales every H2–H13 weight together (shape from detail sliders, overall amount from here).");
+                 "Scales every H2-H13 weight together (shape from detail sliders, overall amount from here).");
         styleToggleDark(chebyDetailToggle);
-        chebyDetailToggle.setTooltip("Reveal per-partial sliders. When off, use Harmonics % and the Bézier curve only.");
+        chebyDetailToggle.setTooltip("Reveal per-partial sliders. When off, use Harmonics % and the Bezier curve only.");
         addAndMakeVisible(chebyDetailToggle);
         chebyDetailToggle.setToggleState(false, juce::dontSendNotification);
         chebyDetailToggle.onClick = [this]
@@ -3098,9 +3116,9 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             s.textFromValueFunction = [](double v) { return juce::String(v, 2); };
             s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         };
-        wireChebyY(chebyYL, chebyYLL, "chebyYL", "Curve L", "Bézier control at x = −1.");
-        wireChebyY(chebyYC, chebyYCL, "chebyYC", "Curve C", "Bézier control at x = 0.");
-        wireChebyY(chebyYR, chebyYRL, "chebyYR", "Curve R", "Bézier control at x = +1.");
+        wireChebyY(chebyYL, chebyYLL, "chebyYL", "Curve L", "Bezier control at x = -1.");
+        wireChebyY(chebyYC, chebyYCL, "chebyYC", "Curve C", "Bezier control at x = 0.");
+        wireChebyY(chebyYR, chebyYRL, "chebyYR", "Curve R", "Bezier control at x = +1.");
 
         static const char* chebyIds[12] = {
             "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
@@ -3117,16 +3135,32 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             chebyH[(size_t) i].textFromValueFunction = [](double v) { return juce::String(v, 3); };
             chebyH[(size_t) i].valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         }
-    }
 
-    ~ShaperTabContent() override
-    {
-        for (auto* s : { &shaperMix, &shaperPreGain, &shaperPostTrim, &magDrive, &magTilt, &magBias, &magTiltLimit, &magFeedback, &magOut,
-                         &chebyHarmMacro, &chebyYL, &chebyYC, &chebyYR })
-            s->setLookAndFeel(nullptr);
-        chebyDetailToggle.setLookAndFeel(nullptr);
+        constexpr int kShValH = 20;
+        constexpr int kShPctW = 58;
+        constexpr int kShGainW = 70;   // "10.00 x"
+        constexpr int kShMagW = 62;
+        constexpr int kShChebyYW = 58;
+        constexpr int kShChebyHW = 64;
+        auto styleShaperReadout = [&](juce::Slider& s, int boxW)
+        {
+            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kShValH);
+        };
+        styleShaperReadout(shaperMix, kShPctW);
+        styleShaperReadout(shaperPreGain, kShGainW);
+        styleShaperReadout(shaperPostTrim, kShGainW);
+        styleShaperReadout(magDrive, kShMagW);
+        styleShaperReadout(magTilt, kShMagW);
+        styleShaperReadout(magBias, kShMagW);
+        styleShaperReadout(magTiltLimit, kShPctW);
+        styleShaperReadout(magFeedback, kShPctW);
+        styleShaperReadout(magOut, kShMagW);
+        styleShaperReadout(chebyHarmMacro, kShPctW);
+        styleShaperReadout(chebyYL, kShChebyYW);
+        styleShaperReadout(chebyYC, kShChebyYW);
+        styleShaperReadout(chebyYR, kShChebyYW);
         for (auto& s : chebyH)
-            s.setLookAndFeel(nullptr);
+            styleShaperReadout(s, kShChebyHW);
     }
 
     int getMinimumContentHeight() const noexcept
@@ -3242,7 +3276,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 {
     auto& ap = proc.getAPVTS();
 
-    eqTabScroll = std::make_unique<EqTabScrollHost>(proc, ap, attachments, buttonAttachments);
+    eqTabScroll = std::make_unique<EqTabScrollHost>(proc, ap, attachments, buttonAttachments, comboAttachments);
     curveMotionPage = std::make_unique<CurveMotionTabContent>(proc);
     roastTabScroll = std::make_unique<RoastTabScrollHost>(proc, ap, attachments, buttonAttachments, comboAttachments);
     shaperTabScroll = std::make_unique<ShaperTabScrollHost>(ap, attachments, buttonAttachments, comboAttachments);
@@ -3268,8 +3302,11 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     meterInLabel.setJustificationType(juce::Justification::centredLeft);
     meterOutLabel.setJustificationType(juce::Justification::centredLeft);
-    meterInLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-    meterOutLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+    const juce::Font meterMono(juce::FontOptions()
+                                   .withName(juce::Font::getDefaultMonospacedFontName())
+                                   .withHeight(11.0f));
+    meterInLabel.setFont(meterMono);
+    meterOutLabel.setFont(meterMono);
     meterInLabel.setColour(juce::Label::textColourId, kAccentGreen);
     meterOutLabel.setColour(juce::Label::textColourId, kAccentBlue);
     addAndMakeVisible(meterInLabel);
@@ -3299,12 +3336,15 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     startTimerHz(20);
 
-    setSize(920, 1000);
+    setLookAndFeel(&pluginSliderValueLf);
+
+    setSize(900, 820);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
 {
     stopTimer();
+    setLookAndFeel(nullptr);
 }
 
 void ParaEQ301AudioProcessorEditor::paint(juce::Graphics& g)

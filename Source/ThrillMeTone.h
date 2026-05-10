@@ -121,19 +121,21 @@ public:
         st.eM = envStep(st.eM, mid, envAtkM, envRelM);
         st.eH = envStep(st.eH, high, envAtkH, envRelH);
 
-        // Stored "ratio" follows original knob semantics: 1 = obliterate, 128 ≈ 1:1 (see EQ tab labels).
+        // Stored "ratio": 1 = hardest, 128 = 1:1 (displayed :1 = 129 − round(stored); see EQ tab).
         const float rCtl = juce::jlimit(1.f, 128.f, ratio);
-        const float rEff = juce::jmax(1.01f, 129.f - rCtl);
+        // Effective compression ratio R (input-over-threshold : output-over-threshold). At stored 128, R == 1 → no GR.
+        // Do NOT use R = 1.01 at 1:1: (1 − 1/R) would leak ~1% of the exp knee, and 128→127 jumps R 1.01→2 (~50× GR).
+        const float R = juce::jmax(1.f, 129.f - rCtl);
         auto bandGain = [&](float env) noexcept -> float
         {
             const float lvlDb = juce::Decibels::gainToDecibels(juce::jmax(1.0e-9f, env));
-            if (lvlDb <= thrDb)
+            if (lvlDb <= thrDb || R <= 1.f)
                 return 1.f;
             const float overDb = lvlDb - thrDb;
             // Exponential knee on overshoot (doc: exponential threshold / VADP-style squash).
             const float t = juce::jmin(6.f, overDb * 0.11f);
             const float overShape = std::exp(t) - 1.f;
-            float redDb = overShape * (1.f - 1.f / rEff);
+            float redDb = overShape * (1.f - 1.f / R);
             redDb = juce::jmin(48.f, redDb);
             return juce::Decibels::decibelsToGain(-redDb);
         };

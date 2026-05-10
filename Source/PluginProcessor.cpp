@@ -40,6 +40,21 @@ namespace
     constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
     constexpr int kCoeffUpdateInterval = 4;
 
+    /** ThrillMe defaults: 50% travel on Spectral, Threshold, and Ratio (original hardware centre), not “transparent” extremes. */
+    constexpr float kThrillSpecDefault = 0.5f;
+
+    inline float thrillThresholdDefaultDb() noexcept
+    {
+        static const juce::NormalisableRange<float> r(-80.0f, 0.0f, 0.1f, 0.32f);
+        return r.convertFrom0to1(0.5f);
+    }
+
+    inline float thrillRatioDefaultStored() noexcept
+    {
+        static const juce::NormalisableRange<float> r(1.0f, 128.0f, 0.1f, 0.35f);
+        return r.convertFrom0to1(0.5f);
+    }
+
     using C = std::complex<double>;
 
     /** Complex frequency response H(f) for JUCE IIR coefficients (same as mag·e^{jφ}). */
@@ -387,33 +402,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1Spec", "ThrillMe 1 spectral",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
+        kThrillSpecDefault,
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1ThreshDb", "ThrillMe 1 threshold",
         juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
-        0.0f,
+        thrillThresholdDefaultDb(),
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1Ratio", "ThrillMe 1 ratio",
         juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
-        128.0f,
+        thrillRatioDefaultStored(),
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2Spec", "ThrillMe 2 spectral",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
+        kThrillSpecDefault,
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2ThreshDb", "ThrillMe 2 threshold",
         juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
-        0.0f,
+        thrillThresholdDefaultDb(),
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2Ratio", "ThrillMe 2 ratio",
         juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
-        128.0f,
+        thrillRatioDefaultStored(),
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -731,6 +746,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::NormalisableRange<float>(0.0f, 180.0f, 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("deg")));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("lfoHostSync", "LFO host tempo sync", false));
+
+    juce::StringArray lfoSyncDivItems;
+    lfoSyncDivItems.add("1/64");
+    lfoSyncDivItems.add("1/32");
+    lfoSyncDivItems.add("1/16");
+    lfoSyncDivItems.add("1/8");
+    lfoSyncDivItems.add("1/4");
+    lfoSyncDivItems.add("1/2");
+    lfoSyncDivItems.add("1 bar");
+    lfoSyncDivItems.add("2 bars");
+    lfoSyncDivItems.add("1/16 triplet");
+    lfoSyncDivItems.add("1/8 triplet");
+    lfoSyncDivItems.add("1/4 triplet");
+    lfoSyncDivItems.add("1/32 triplet");
+    layout.add(std::make_unique<juce::AudioParameterChoice>("lfoHostSyncDiv", "LFO sync division", lfoSyncDivItems, 3));
 
     // 0 Hz = LFO phase frozen (no sweep); >0 starts from very slow rates.
     auto lfoRateRange = juce::NormalisableRange<float>(0.0f, 14.0f, 0.01f, 0.35f);
@@ -1226,6 +1258,29 @@ namespace
         }
         return static_cast<float>(std::sqrt(juce::jmax(1.0e-30, sumM2 / (double) N)));
     }
+
+    /** LFO Hz when tempo-synced; `divIdx` matches APVTS `lfoHostSyncDiv` (quarter note = 1 beat). */
+    float motionLfoHzFromSyncDivision(float bpm, int divIdx) noexcept
+    {
+        static constexpr float beatsPerCycle[] = {
+            1.f / 16.f, // 0: 1/64
+            1.f / 8.f,  // 1: 1/32
+            1.f / 4.f,  // 2: 1/16
+            1.f / 2.f,  // 3: 1/8
+            1.f,        // 4: 1/4
+            2.f,        // 5: 1/2
+            4.f,        // 6: 1 bar (4/4)
+            8.f,        // 7: 2 bars
+            1.f / 6.f,  // 8: 1/16 triplet
+            1.f / 3.f,  // 9: 1/8 triplet
+            2.f / 3.f,  // 10: 1/4 triplet
+            1.f / 12.f  // 11: 1/32 triplet
+        };
+        constexpr int n = int(sizeof(beatsPerCycle) / sizeof(beatsPerCycle[0]));
+        divIdx = juce::jlimit(0, n - 1, divIdx);
+        const float bp = juce::jmax(0.001f, bpm);
+        return bp / (60.f * beatsPerCycle[(size_t) divIdx]);
+    }
 }
 
 float ParaEQ301AudioProcessor::computeEqFourBandPinkLevelCompensation(double sampleRate, int channelIndex) const noexcept
@@ -1409,10 +1464,39 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const bool eqPinkBalOn = apvts.getRawParameterValue("eqPinkLevelBal")->load() > 0.5f;
     std::array<float, 4> eqPinkGain { { 1.f, 1.f, 1.f, 1.f } };
 
-    const float rHi = apvts.getRawParameterValue("lfoHiRate")->load() / static_cast<float>(sr);
-    const float rM1 = apvts.getRawParameterValue("lfoM1Rate")->load() / static_cast<float>(sr);
-    const float rM2 = apvts.getRawParameterValue("lfoM2Rate")->load() / static_cast<float>(sr);
-    const float rLo = apvts.getRawParameterValue("lfoLoRate")->load() / static_cast<float>(sr);
+    float hzHi = apvts.getRawParameterValue("lfoHiRate")->load();
+    float hzM1 = apvts.getRawParameterValue("lfoM1Rate")->load();
+    float hzM2 = apvts.getRawParameterValue("lfoM2Rate")->load();
+    float hzLo = apvts.getRawParameterValue("lfoLoRate")->load();
+    if (apvts.getRawParameterValue("lfoHostSync")->load() > 0.5f)
+    {
+        int divIdx = 3;
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("lfoHostSyncDiv")))
+            divIdx = c->getIndex();
+        double bpm = 120.0;
+        bool haveBpm = false;
+        if (auto* ph = getPlayHead())
+            if (auto pos = ph->getPosition())
+                if (auto bpmOpt = pos->getBpm())
+                {
+                    const double bpmVal = *bpmOpt;
+                    if (bpmVal > 0.1)
+                    {
+                        bpm = bpmVal;
+                        haveBpm = true;
+                    }
+                }
+        if (haveBpm)
+        {
+            const float hzSync = motionLfoHzFromSyncDivision((float) bpm, divIdx);
+            hzHi = hzM1 = hzM2 = hzLo = hzSync;
+        }
+    }
+
+    const float rHi = hzHi / static_cast<float>(sr);
+    const float rM1 = hzM1 / static_cast<float>(sr);
+    const float rM2 = hzM2 / static_cast<float>(sr);
+    const float rLo = hzLo / static_cast<float>(sr);
 
     const float baseHiCf = apvts.getRawParameterValue("hiCf")->load();
     const float baseHiG = apvts.getRawParameterValue("hiGain")->load();
@@ -1653,13 +1737,15 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
             x = lowShelfPerChannel[i].processSample(x);
             if (roastLowChainAmt > 1.0e-6f)
             {
-                const float effLow = juce::jlimit(0.0f, 1.0f, roastLowChainAmt * juce::jmax(effPre, effPost));
+                // Drive from Roast Low % and Life (mPre); do not gate on ThrillMe wet — effPre/effPost can be 0 while
+                // these taps should still apply Dirt / core crunch between EQ bands.
+                const float effLow = juce::jlimit(0.0f, 1.0f, roastLowChainAmt * mPre);
                 x = applyCoreSaturation(x, effLow, coreDirt, coreCrunch, coreDcLow[i], coreDcLeakCoeffProc, roastCoreShapeIdx);
             }
             x = mid1PeakPerChannel[i].processSample(x);
             if (roastMidChain > 1.0e-6f)
             {
-                const float effMid = juce::jlimit(0.0f, 1.0f, roastMidChain * juce::jmax(effPre, effPost));
+                const float effMid = juce::jlimit(0.0f, 1.0f, roastMidChain * mPost);
                 x = applyCoreSaturation(x, effMid, coreDirt, coreCrunch, coreDcMid[i], coreDcLeakCoeffProc, roastCoreShapeIdx);
             }
             x = mid2PeakPerChannel[i].processSample(x);
@@ -2047,12 +2133,12 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         };
         for (const char* hid : zChebyH)
             apvtsSetFloatPlain(ap, hid, 0.f);
-        apvtsSetFloatPlain(ap, "thrill1Spec", 0.f);
-        apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);
-        apvtsSetFloatPlain(ap, "thrill1Ratio", 128.f);
-        apvtsSetFloatPlain(ap, "thrill2Spec", 0.f);
-        apvtsSetFloatPlain(ap, "thrill2ThreshDb", 0.f);
-        apvtsSetFloatPlain(ap, "thrill2Ratio", 128.f);
+        apvtsSetFloatPlain(ap, "thrill1Spec", kThrillSpecDefault);
+        apvtsSetFloatPlain(ap, "thrill1ThreshDb", thrillThresholdDefaultDb());
+        apvtsSetFloatPlain(ap, "thrill1Ratio", thrillRatioDefaultStored());
+        apvtsSetFloatPlain(ap, "thrill2Spec", kThrillSpecDefault);
+        apvtsSetFloatPlain(ap, "thrill2ThreshDb", thrillThresholdDefaultDb());
+        apvtsSetFloatPlain(ap, "thrill2Ratio", thrillRatioDefaultStored());
     };
 
     auto flatEq = [&]()
@@ -2071,6 +2157,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
 
     auto motionOff = [&]()
     {
+        apvtsSetBool01(ap, "lfoHostSync", false);
         apvtsSetFloatPlain(ap, "lfoHiDepthGain", 0.f);
         apvtsSetFloatPlain(ap, "lfoHiDepthCf", 0.f);
         apvtsSetFloatPlain(ap, "lfoM1DepthGain", 0.f);
