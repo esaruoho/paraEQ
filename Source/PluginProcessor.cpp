@@ -77,16 +77,34 @@ namespace
         return v1_over_v3 * v3_over_v0;
     }
 
-    /** Positive vs negative drive → more even harmonics when dirt > 0. */
-    float shapeMusicalWet(float x, float push, float dirt01) noexcept
+    /** Positive vs negative drive → more even harmonics when dirt > 0. posMul/negMul scale asym (roast core flavour). */
+    float shapeMusicalWetAsym(float x, float push, float dirt01, float posMul, float negMul) noexcept
     {
         const float d = juce::jlimit(0.f, 1.f, dirt01);
-        const float aPos = push * (1.0f + 0.55f * d);
-        const float aNeg = push * (1.0f - 0.38f * d);
+        const float aPos = push * (1.0f + 0.55f * posMul * d);
+        const float aNeg = push * (1.0f - 0.38f * negMul * d);
         if (x >= 0.0f)
             return std::tanh(aPos * x);
         return std::tanh(aNeg * x);
     }
+
+    struct RoastCoreFlavourCoeffs
+    {
+        float dirtScale;
+        float crunchBias;
+        float pushScale;
+        float posAsymMul;
+        float negAsymMul;
+        float inputGain;
+    };
+
+    static constexpr RoastCoreFlavourCoeffs kRoastCoreFlavours[5] = {
+        { 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f },
+        { 1.22f, 0.0f, 1.0f, 1.18f, 1.0f, 1.0f },
+        { 1.0f, 0.14f, 1.08f, 1.1f, 1.04f, 1.04f },
+        { 0.88f, -0.12f, 0.94f, 0.92f, 0.92f, 1.0f },
+        { 1.12f, 0.06f, 1.12f, 1.22f, 1.06f, 1.05f },
+    };
 
     float dcBlockSample(float x, float& dcState, float leakCoeff) noexcept
     {
@@ -94,14 +112,18 @@ namespace
         return x - dcState;
     }
 
-    float applyCoreSaturation(float x, float drive01, float dirt01, float crunch01, float& dcState, float leakCoeff) noexcept
+    float applyCoreSaturation(float x, float drive01, float dirt01, float crunch01, float& dcState, float leakCoeff,
+                              int roastCoreShapeIdx) noexcept
     {
         if (drive01 <= 1.0e-8f)
             return x;
-        x = juce::jlimit(-10.0f, 10.0f, x);
-        const float push = 1.0f + drive01 * 24.0f;
-        const float c = juce::jlimit(0.f, 1.f, crunch01);
-        const float soft = shapeMusicalWet(x, push, dirt01);
+        const int fi = juce::jlimit(0, 4, roastCoreShapeIdx);
+        const RoastCoreFlavourCoeffs& fc = kRoastCoreFlavours[(size_t) fi];
+        x = juce::jlimit(-10.0f, 10.0f, x * fc.inputGain);
+        const float push = 1.0f + drive01 * 24.0f * fc.pushScale;
+        const float dUse = juce::jlimit(0.f, 1.f, dirt01 * fc.dirtScale);
+        const float c = juce::jlimit(0.f, 1.f, crunch01 + fc.crunchBias);
+        const float soft = shapeMusicalWetAsym(x, push, dUse, fc.posAsymMul, fc.negAsymMul);
         const float xc = juce::jlimit(-12.f, 12.f, x * 1.15f);
         const float roasted = xc / (1.f + std::abs(xc));
         const float wet = soft * (1.f - c) + roasted * c;
@@ -258,6 +280,30 @@ namespace
         for (auto* c : e.getChildIterator())
             migrateLegacyCoreBypassXml(*c);
     }
+
+    static void walkThrillRatioFlipParams(juce::XmlElement& x)
+    {
+        if (x.hasTagName("PARAM"))
+        {
+            const juce::String id = x.getStringAttribute("id");
+            if (id == "thrill1Ratio" || id == "thrill2Ratio")
+            {
+                const int vi = juce::jlimit(1, 128, juce::roundToInt(x.getDoubleAttribute("value")));
+                x.setAttribute("value", (double) (129 - vi));
+            }
+        }
+        for (auto* c : x.getChildIterator())
+            walkThrillRatioFlipParams(*c);
+    }
+
+    /** Stored thrill*Ratio used to equal effective GR ratio; now stored is inverted vs :1 display (original: left = hard). */
+    void migrateThrillRatioSemanticsXml(juce::XmlElement& root)
+    {
+        if (root.getIntAttribute("thrillRatioSemanticRev", 0) >= 2)
+            return;
+        walkThrillRatioFlipParams(root);
+        root.setAttribute("thrillRatioSemanticRev", 2);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::createParameterLayout()
@@ -328,14 +374,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "coreSat", "ThrillMe 1 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
+        1.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "core2Sat", "ThrillMe 2 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
+        1.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -345,13 +391,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1ThreshDb", "ThrillMe 1 threshold",
-        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f),
+        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1Ratio", "ThrillMe 1 ratio",
         juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
-        1.0f,
+        128.0f,
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -361,13 +407,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2ThreshDb", "ThrillMe 2 threshold",
-        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f),
+        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2Ratio", "ThrillMe 2 ratio",
         juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
-        1.0f,
+        128.0f,
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -394,6 +440,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    juce::StringArray roastCoreShapeItems;
+    roastCoreShapeItems.add("Classic");
+    roastCoreShapeItems.add("Warm asym");
+    roastCoreShapeItems.add("Aggro");
+    roastCoreShapeItems.add("Tape soft");
+    roastCoreShapeItems.add("Punch");
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "roastCoreShape", "Roast core flavour", roastCoreShapeItems, 0));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "roastPreEmphDb", "Roast pre HF",
@@ -549,11 +604,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.35f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("aprEnable", "Autoparametric resonator", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>("aprEnable", "APR", false));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "aprMix", "APR mix",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
+        0.22f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "aprBaseHz", "APR base Hz",
@@ -1278,6 +1333,9 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float core2Drive = bypass2 ? 0.f : apvts.getRawParameterValue("core2Sat")->load();
     const float coreDirt = apvts.getRawParameterValue("coreDirt")->load();
     const float coreCrunch = apvts.getRawParameterValue("coreCrunch")->load();
+    int roastCoreShapeIdx = 0;
+    if (auto* rc = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("roastCoreShape")))
+        roastCoreShapeIdx = juce::jlimit(0, 4, rc->getIndex());
     const float lifeDepth = apvts.getRawParameterValue("coreLifeDepth")->load();
     const float lifeHz = apvts.getRawParameterValue("coreLifeHz")->load();
     const float srF = static_cast<float>(sr);
@@ -1330,6 +1388,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float aprPumpDepth = apvts.getRawParameterValue("aprPumpDepth")->load();
     const float aprAutoTrack = apvts.getRawParameterValue("aprAutoTrack")->load();
     const float aprDrive = apvts.getRawParameterValue("aprDrive")->load();
+    // Narrow Q bandpass passes little broadband energy; scale wet so high-Q presets stay hearable (Q=8 → ~1×).
+    const float aprQmakeup = juce::jlimit(0.4f, 5.5f, std::sqrt(juce::jmax(0.5f, aprQ) * 0.125f));
 
     const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
     const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
@@ -1494,6 +1554,12 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 x = highShelfPerChannel[i].processSample(x);
                 if (eqPinkBalOn)
                     x *= eqPinkGain[i];
+                // Linear-EQ path: APR still runs last (after EQ + pink), same as full path ordering.
+                if (aprOn && aprMix > 1.0e-7f)
+                {
+                    const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
+                    x += aprMix * (bp * aprQmakeup);
+                }
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
@@ -1588,13 +1654,13 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
             if (roastLowChainAmt > 1.0e-6f)
             {
                 const float effLow = juce::jlimit(0.0f, 1.0f, roastLowChainAmt * juce::jmax(effPre, effPost));
-                x = applyCoreSaturation(x, effLow, coreDirt, coreCrunch, coreDcLow[i], coreDcLeakCoeffProc);
+                x = applyCoreSaturation(x, effLow, coreDirt, coreCrunch, coreDcLow[i], coreDcLeakCoeffProc, roastCoreShapeIdx);
             }
             x = mid1PeakPerChannel[i].processSample(x);
             if (roastMidChain > 1.0e-6f)
             {
                 const float effMid = juce::jlimit(0.0f, 1.0f, roastMidChain * juce::jmax(effPre, effPost));
-                x = applyCoreSaturation(x, effMid, coreDirt, coreCrunch, coreDcMid[i], coreDcLeakCoeffProc);
+                x = applyCoreSaturation(x, effMid, coreDirt, coreCrunch, coreDcMid[i], coreDcLeakCoeffProc, roastCoreShapeIdx);
             }
             x = mid2PeakPerChannel[i].processSample(x);
             x = highShelfPerChannel[i].processSample(x);
@@ -1620,11 +1686,6 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 }
                 x += wet;
             }
-            if (aprOn && !linearListen && aprMix > 1.0e-7f)
-            {
-                const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
-                x += aprMix * bp;
-            }
             {
                 const float wet2 = thrillMe2.processChannel(ch, x, thrill2ThreshDb, thrill2Ratio);
                 x = (1.f - effPost) * x + effPost * wet2;
@@ -1636,6 +1697,12 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
             x *= 1.f + roastRingAmt * 0.38f * std::sin(roastRingPhase + (float) ch * 0.7f);
             if (eqPinkBalOn)
                 x *= eqPinkGain[i];
+            // APR last in the roast chain (after ring / pink), before output — parallel resonator "cherry on top".
+            if (aprOn && aprMix > 1.0e-7f)
+            {
+                const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
+                x += aprMix * (bp * aprQmakeup);
+            }
             if (!std::isfinite(x))
                 x = 0.0f;
             data[n] = x;
@@ -1930,6 +1997,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
     auto zeroRoast = [&]()
     {
         apvtsSetFloatPlain(ap, "coreCrunch", 0.f);
+        apvtsSetChoiceIndex(ap, "roastCoreShape", 0);
         apvtsSetFloatPlain(ap, "roastPreEmphDb", 0.f);
         apvtsSetFloatPlain(ap, "roastPostTiltDb", 0.f);
         apvtsSetFloatPlain(ap, "roastBoostTrack", 0.f);
@@ -1981,10 +2049,10 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
             apvtsSetFloatPlain(ap, hid, 0.f);
         apvtsSetFloatPlain(ap, "thrill1Spec", 0.f);
         apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);
-        apvtsSetFloatPlain(ap, "thrill1Ratio", 1.f);
+        apvtsSetFloatPlain(ap, "thrill1Ratio", 128.f);
         apvtsSetFloatPlain(ap, "thrill2Spec", 0.f);
         apvtsSetFloatPlain(ap, "thrill2ThreshDb", 0.f);
-        apvtsSetFloatPlain(ap, "thrill2Ratio", 1.f);
+        apvtsSetFloatPlain(ap, "thrill2Ratio", 128.f);
     };
 
     auto flatEq = [&]()
@@ -2033,8 +2101,8 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
             apvtsSetBool01(ap, "linearEqListen", false);
             apvtsSetBool01(ap, "core1Bypass", false);
             apvtsSetBool01(ap, "core2Bypass", false);
-            apvtsSetFloatPlain(ap, "coreSat", 0.f);
-            apvtsSetFloatPlain(ap, "core2Sat", 0.f);
+            apvtsSetFloatPlain(ap, "coreSat", 1.f);
+            apvtsSetFloatPlain(ap, "core2Sat", 1.f);
             zeroRoast();
             flatEq();
             motionOff();
@@ -2361,6 +2429,8 @@ void ParaEQ301AudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     const auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    if (xml != nullptr && xml->getIntAttribute("thrillRatioSemanticRev", 0) < 2)
+        xml->setAttribute("thrillRatioSemanticRev", 2);
     copyXmlToBinary(*xml, destData);
 }
 
@@ -2370,6 +2440,7 @@ void ParaEQ301AudioProcessor::setStateInformation(const void* data, int sizeInBy
     if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
     {
         migrateLegacyCoreBypassXml(*xmlState);
+        migrateThrillRatioSemanticsXml(*xmlState);
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
     }
 }

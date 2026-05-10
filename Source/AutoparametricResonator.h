@@ -5,8 +5,8 @@
 
 /**
  * Autoparametric resonator — bandpass resonator whose centre frequency is gently modulated by (1) a slow
- * envelope follower on |x| (“auto” tracking) and (2) a sinusoidal pump, evoking classical parametric excitation
- * (time-varying reactance) in the spirit of Mandelstam–Papaleksi–type analyses, without modelling any specific circuit.
+ * envelope follower on |x| (“auto” tracking) and (2) a sinusoidal pump. Mixed in parallel as the last roast-stage
+ * process (after ring / EQ pink balance), not mid-chain.
  */
 class AutoparametricResonatorChannel
 {
@@ -17,6 +17,7 @@ public:
         pumpPhase = 0.0;
         env = 1.0e-8f;
         fcSmoother = 440.f;
+        snapFcSmoother = true;
     }
 
     void reset() noexcept
@@ -25,6 +26,7 @@ public:
         pumpPhase = 0.0;
         env = 1.0e-8f;
         fcSmoother = 440.f;
+        snapFcSmoother = true;
     }
 
     /** Bandpass output for parallel mix into the hot path. */
@@ -50,10 +52,20 @@ public:
         fc = juce::jlimit(40.f, juce::jmin(16000.f, (float) sr * 0.48f), fc);
 
         constexpr float fcSmooth = 0.11f;
-        fcSmoother += fcSmooth * (fc - fcSmoother);
+        if (snapFcSmoother)
+        {
+            fcSmoother = fc;
+            snapFcSmoother = false;
+        }
+        else
+        {
+            fcSmoother += fcSmooth * (fc - fcSmoother);
+        }
 
         svf.setCoeffs(fcSmoother, juce::jmax(0.28f, q), sr);
-        return svf.processBandpassNonlinear(x, drive01);
+        // Full "drive %" maps to strong tanh in the SVF; at 1.0 it can flatten the loop and kill the BP.
+        const float nl = juce::jlimit(0.f, 1.f, drive01 * 0.65f);
+        return svf.processBandpassNonlinear(x, nl);
     }
 
 private:
@@ -62,4 +74,5 @@ private:
     double pumpPhase = 0.0;
     float env = 1.0e-8f;
     float fcSmoother = 440.f;
+    bool snapFcSmoother = true;
 };

@@ -62,8 +62,10 @@ juce_add_plugin(ParaEQ301
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    PLUGIN_MANUFACTURER_CODE Peq1
-    PLUGIN_CODE P301
+    # AU/VST3: exactly four ASCII characters per field (cannot spell full "EsaRuoho" / "ParaEQ").
+    # Hosts: aufx:<PLUGIN_CODE>:<PLUGIN_MANUFACTURER_CODE> → aufx:peQA:EsaR
+    PLUGIN_CODE peQA
+    PLUGIN_MANUFACTURER_CODE EsaR
     FORMATS AU VST3 Standalone
     PRODUCT_NAME "ParaEQ 301")
 

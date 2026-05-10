@@ -4,9 +4,20 @@
 #include <array>
 
 /**
- * Original “ThrillMe-style” mastering colour: serial mild spectral lift, 3-band dynamics
- * (1 kHz / 10 kHz first-order splits), then soft waveshape limiting. Not a clone of any
- * third-party product — behaviour is intentionally simple and stable.
+ * ThrillMe 2–style chain (inspired by published behaviour, not a licensed clone):
+ *
+ * 1) Spectral enhancer — serial path of four IIR bands (1× lowshelf + 2× peaking + 1× highshelf
+ *    per channel). Original spec: “bipole shelving”; here we use JUCE RBJ-style shelves/peaks
+ *    as a practical stand-in until fixtures tune them.
+ *
+ * 2) Dynamics — single-pole @ 1 kHz and 10 kHz (−6 dB/oct style) into low / mid / high; each
+ *    band has its own envelope follower and gain (3 parallel compressors), then sum.
+ *    Per-band attack/release are fixed from sample rate (auto by band), matching “set
+ *    automatically depending the band (l/m/h)”.
+ *
+ * 3) Limiter — mathematical waveshape on the summed band output (tanh here).
+ *
+ * Ratio 1…128 stored inverted vs on-screen :1 (low stored = aggressive); see EQ tab labels.
  */
 class ThrillMeTone
 {
@@ -34,8 +45,15 @@ public:
             st.eL = st.eM = st.eH = 1.0e-8f;
         }
         recomputeSplitCoeffs();
-        envCoeffAtk = 1.f - static_cast<float>(std::exp(-1.0 / juce::jmax(1.0e-6, sr * 0.00035)));
-        envCoeffRel = 1.f - static_cast<float>(std::exp(-1.0 / juce::jmax(1.0e-6, sr * 0.045)));
+        const auto atkRelFromMs = [this](float atkMs, float relMs, float& atkOut, float& relOut) noexcept
+        {
+            atkOut = 1.f - static_cast<float>(std::exp(-1.0 / juce::jmax(1.0e-6, sr * (double) atkMs * 0.001)));
+            relOut = 1.f - static_cast<float>(std::exp(-1.0 / juce::jmax(1.0e-6, sr * (double) relMs * 0.001)));
+        };
+        // Band-dependent times (doc: each band’s attack/release set automatically by band).
+        atkRelFromMs(2.8f, 150.f, envAtkL, envRelL);
+        atkRelFromMs(0.38f, 48.f, envAtkM, envRelM);
+        atkRelFromMs(0.11f, 26.f, envAtkH, envRelH);
     }
 
     void reset() noexcept
@@ -92,25 +110,31 @@ public:
         const float mid = st.z10 - st.z1;
         const float high = y - st.z10;
 
-        auto envStep = [&](float env, float z) noexcept -> float
+        auto envStep = [&](float env, float z, float cAtk, float cRel) noexcept -> float
         {
             const float az = std::abs(z);
             if (az > env)
-                return env + envCoeffAtk * (az - env);
-            return env + envCoeffRel * (az - env);
+                return env + cAtk * (az - env);
+            return env + cRel * (az - env);
         };
-        st.eL = envStep(st.eL, low);
-        st.eM = envStep(st.eM, mid);
-        st.eH = envStep(st.eH, high);
+        st.eL = envStep(st.eL, low, envAtkL, envRelL);
+        st.eM = envStep(st.eM, mid, envAtkM, envRelM);
+        st.eH = envStep(st.eH, high, envAtkH, envRelH);
 
-        const float rEff = juce::jmax(1.01f, ratio);
+        // Stored "ratio" follows original knob semantics: 1 = obliterate, 128 ≈ 1:1 (see EQ tab labels).
+        const float rCtl = juce::jlimit(1.f, 128.f, ratio);
+        const float rEff = juce::jmax(1.01f, 129.f - rCtl);
         auto bandGain = [&](float env) noexcept -> float
         {
             const float lvlDb = juce::Decibels::gainToDecibels(juce::jmax(1.0e-9f, env));
             if (lvlDb <= thrDb)
                 return 1.f;
             const float overDb = lvlDb - thrDb;
-            const float redDb = overDb * (1.f - 1.f / rEff);
+            // Exponential knee on overshoot (doc: exponential threshold / VADP-style squash).
+            const float t = juce::jmin(6.f, overDb * 0.11f);
+            const float overShape = std::exp(t) - 1.f;
+            float redDb = overShape * (1.f - 1.f / rEff);
+            redDb = juce::jmin(48.f, redDb);
             return juce::Decibels::decibelsToGain(-redDb);
         };
 
@@ -118,7 +142,8 @@ public:
         const float gM = bandGain(st.eM);
         const float gH = bandGain(st.eH);
         float sum = low * gL + mid * gM + high * gH;
-        sum = std::tanh(1.05f * sum);
+        // Limiter: mathematical waveshaping (spec) — soft clip / tame overshoots after band sum.
+        sum = std::tanh(1.28f * sum);
         if (!std::isfinite(sum))
             return 0.f;
         return sum;
@@ -148,6 +173,7 @@ private:
     int nCh = 2;
     float splitLp1k = 0.1f;
     float splitLp10k = 0.1f;
-    float envCoeffAtk = 0.1f;
-    float envCoeffRel = 0.001f;
+    float envAtkL = 0.1f, envRelL = 0.001f;
+    float envAtkM = 0.1f, envRelM = 0.001f;
+    float envAtkH = 0.1f, envRelH = 0.001f;
 };

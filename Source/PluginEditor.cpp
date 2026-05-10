@@ -1500,7 +1500,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleToggleDark(eqPinkBalToggle);
         eqPinkBalToggle.setTooltip(
             "When on (default), a gain trim derived from the four linear EQ bands is applied after the full colour path: "
-            "ThrillMe 1 & 2, the four IIR bands, SVF / anharmonic / APR (if on), roast post shelf, lo-fi, glue, and ring — "
+            "ThrillMe 1 & 2, the four IIR bands, SVF, anharmonic bank, roast post shelf, lo-fi, glue, ring — then APR on top (if on) — "
             "so big EQ boosts do not stack as much extra loudness through that chain. Turn off for classic raw dB behaviour.");
         addAndMakeVisible(eqPinkBalToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "eqPinkLevelBal", eqPinkBalToggle));
@@ -1546,7 +1546,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleLabel(coreSatLabel, "Mix %");
         addAndMakeVisible(coreSat);
         addAndMakeVisible(coreSatLabel);
-        coreSat.setTooltip("Dry/wet of ThrillMe 1 (spectral lift + 3-band dynamics + limiter-style shaper) before the EQ. Default 0%. Spec / Thr / Ratio are the three tone controls. Dragging above 0% clears bypass if it was on.");
+        coreSat.setTooltip("Dry/wet of ThrillMe 1 before the EQ. Default 100% so ThrillMe is always in circuit; with Init / flat Thrill sliders it stays close to transparent. Dragging above 0% clears bypass if it was on.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreSat", coreSat));
         coreSat.textFromValueFunction = [](double v)
         {
@@ -1577,7 +1577,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleLabel(core2SatLabel, "Mix %");
         addAndMakeVisible(core2Sat);
         addAndMakeVisible(core2SatLabel);
-        core2Sat.setTooltip("Dry/wet of ThrillMe 2 after the EQ (and optional SVF / anharm taps), before roast tail. Default 0%. Dragging above 0% clears bypass if it was on.");
+        core2Sat.setTooltip("Dry/wet of ThrillMe 2 after the EQ (and optional SVF / anharm taps), before roast tail. Default 100% (same idea as ThrillMe 1). Dragging above 0% clears bypass if it was on.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "core2Sat", core2Sat));
         core2Sat.textFromValueFunction = [](double v)
         {
@@ -1617,15 +1617,20 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         thrill1Title.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
         addAndMakeVisible(thrill1Title);
         setupThrillSlider(thrill1Spec, thrill1SpecLabel, "thrill1Spec", "Spec", kAccentGreen,
-                          "Spectral lift (shelves + peaks) before dynamics — inspired by classic 3-knob mastering colour, not a plugin clone.");
+                          "Spectral enhancer before the 3-band dynamics (shelves + peaks). Default 0 % with ThrillMe mix at 100 % ≈ pass-through until you raise it.");
         setupThrillSlider(thrill1Thr, thrill1ThrLabel, "thrill1ThreshDb", "Thr dB", kAccentBlue,
-                          "Multiband compressor threshold in dBFS (higher = less gain reduction).");
+                          "Multiband threshold (−80…0 dB, skewed like the original exponential law). Lower = more gain reduction. Centre ≈ −22 dB.");
         setupThrillSlider(thrill1Ratio, thrill1RatioLabel, "thrill1Ratio", "Ratio", kAccentGreen,
-                          "Downward compression ratio (1:1 off … 1:128).");
-        thrill1Ratio.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + ":1"; };
+                          "Compression strength like the original 3-knob unit: slider left / high displayed :1 = harder squash; right / low :1 = gentle.");
+        thrill1Ratio.textFromValueFunction = [](double v)
+        {
+            const int shown = 129 - juce::jlimit(1, 128, juce::roundToInt(v));
+            return juce::String(shown) + ":1";
+        };
         thrill1Ratio.valueFromTextFunction = [](const juce::String& t)
         {
-            return (double) juce::jlimit(1, 128, t.upToFirstOccurrenceOf(":", false, false).getIntValue());
+            const int shown = juce::jlimit(1, 128, t.upToFirstOccurrenceOf(":", false, false).getIntValue());
+            return (double) (129 - shown);
         };
         thrill1Thr.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
         thrill1Thr.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
@@ -1647,9 +1652,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         setupThrillSlider(thrill2Spec, thrill2SpecLabel, "thrill2Spec", "Spec", kAccentGreen,
                           "Spectral lift before ThrillMe 2 dynamics on the post-EQ path.");
         setupThrillSlider(thrill2Thr, thrill2ThrLabel, "thrill2ThreshDb", "Thr dB", kAccentBlue,
-                          "Multiband compressor threshold in dBFS (higher = less gain reduction).");
+                          "Multiband threshold (−80…0 dB, skewed). Lower = more gain reduction.");
         setupThrillSlider(thrill2Ratio, thrill2RatioLabel, "thrill2Ratio", "Ratio", kAccentGreen,
-                          "Downward compression ratio (1:1 off … 1:128).");
+                          "Left / high displayed :1 = harder squash (matches original ThrillMe knob direction).");
         thrill2Ratio.textFromValueFunction = thrill1Ratio.textFromValueFunction;
         thrill2Ratio.valueFromTextFunction = thrill1Ratio.valueFromTextFunction;
         thrill2Thr.textFromValueFunction = thrill1Thr.textFromValueFunction;
@@ -2168,6 +2173,8 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     juce::Label intro;
     juce::Slider coreCrunch;
     juce::Label coreCrunchL;
+    juce::Label roastCoreShapeL;
+    juce::ComboBox roastCoreShapeBox;
     juce::Slider roastPreEmphDb;
     juce::Label roastPreEmphDbL;
     juce::Slider roastPostTiltDb;
@@ -2249,12 +2256,14 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "oversample", oversampleBox));
 
         styleToggleDark(linearEqToggle);
-        linearEqToggle.setTooltip("Bypass all saturation and roast color - linear RBJ IIR chain only (plus trim + limiter).");
+        linearEqToggle.setTooltip(
+            "Bypass ThrillMe, cores, shaper, SVF, anharmonic bank, and the rest of the roast chain — only the four RBJ bands (+ pink balance) stay. "
+            "APR still runs after those bands so the APR tab always affects audio.");
         addAndMakeVisible(linearEqToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "linearEqListen", linearEqToggle));
 
         styleLabelDark(intro,
-                       "Crunch / roast: pre HF -> cores -> low/mid taps -> linear EQ -> nonlinear SVF (parallel BP) -> core 2 -> post tilt -> lo-fi -> glue -> ring. "
+                       "Crunch / roast: pre HF -> cores -> low/mid taps (Roast core flavour shapes those taps) -> linear EQ -> nonlinear SVF (parallel BP) -> core 2 -> post tilt -> lo-fi -> glue -> ring. "
                        "Boost track follows Motion when engaged. Optional sidechain bus: future.",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
@@ -2287,6 +2296,13 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 
         wirePct(coreCrunch, coreCrunchL, "coreCrunch", "Crunch %",
                 "Blend toward a harder curve on Roast low-chain and mid-chain saturation taps (between EQ bands).");
+        styleLabelDark(roastCoreShapeL, "Core flavour", true);
+        addAndMakeVisible(roastCoreShapeL);
+        roastCoreShapeBox.setTooltip("Roast low-/mid-chain saturator recipe: Classic = original; others skew asymmetry, crunch blend, and drive growth (Dirt/Crunch still apply).");
+        addAndMakeVisible(roastCoreShapeBox);
+        if (auto* rc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("roastCoreShape")))
+            roastCoreShapeBox.addItemList(rc->choices, 1);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "roastCoreShape", roastCoreShapeBox));
         wireDb(roastPreEmphDb, roastPreEmphDbL, "roastPreEmphDb", "Pre HF dB",
                 "High shelf (~3 kHz) before the first core - more fizz and crunch when driven.");
         wireDb(roastPostTiltDb, roastPostTiltDbL, "roastPostTiltDb", "Post tilt dB",
@@ -2407,7 +2423,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     {
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
         constexpr int kIntroCap = 96;
-        constexpr int kRoastSliderRows = 8;
+        constexpr int kRoastSliderRows = 9;
         constexpr int kRoastRowH = 34;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
@@ -2437,7 +2453,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         intro.setBounds(b.removeFromTop(introH));
         b.removeFromTop(6);
 
-        constexpr int kRoastSliderRows = 8;
+        constexpr int kRoastSliderRows = 9;
         constexpr int kRoastRowH = 34;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
@@ -2455,6 +2471,11 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         constexpr int kRoastMidGutter = 8;
         const int inner = juce::jmax(1, gridBand.getWidth() - kRoastMidGutter);
         const int half = inner / 2;
+        {
+            auto flav = gridBand.removeFromTop(rowH);
+            roastCoreShapeL.setBounds(flav.removeFromLeft(96).withTrimmedTop(4));
+            roastCoreShapeBox.setBounds(flav.reduced(4, 2));
+        }
         auto left = gridBand.removeFromLeft(half);
         auto right = gridBand;
         right.removeFromLeft(8);
@@ -2756,7 +2777,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabScrollHost : public juce::Viewpor
 struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Component
 {
     juce::Label intro;
-    juce::ToggleButton aprEnableToggle { "Autoparametric resonator" };
+    juce::ToggleButton aprEnableToggle { "APR" };
     juce::Slider aprMix;
     juce::Label aprMixL;
     juce::Slider aprBaseHz;
@@ -2785,16 +2806,14 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
                          std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts)
     {
         styleLabelDark(intro,
-                       "Inspired by classical parametric excitation (e.g. Mandelstam–Papaleksi–type analyses of periodic parameter variation in "
-                       "resonant systems, 1930s): a VA bandpass whose centre frequency is nudged by an envelope follower and by a slow sinusoidal "
-                       "\"pump\". Inserted after the inharmonic bank, before ThrillMe 2. Not a circuit model — a stable musical resonator.",
+                       "Parallel bandpass resonator — last in the roast chain (after ring / pink balance), and last in Linear EQ only mode too (after the four bands + pink).",
                        true);
         intro.setJustificationType(juce::Justification::topLeft);
         intro.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         addAndMakeVisible(intro);
 
         styleToggleDark(aprEnableToggle);
-        aprEnableToggle.setTooltip("Enable autoparametric resonator (parallel bandpass add into the hot path).");
+        aprEnableToggle.setTooltip("Parallel bandpass resonator. Needs Mix % > 0 to hear wet signal.");
         addAndMakeVisible(aprEnableToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "aprEnable", aprEnableToggle));
 
@@ -2810,7 +2829,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
             s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
         };
 
-        wirePct(aprMix, aprMixL, "aprMix", "Mix %", "Parallel wet of the resonator bandpass.");
+        wirePct(aprMix, aprMixL, "aprMix", "Mix %", "How loud the resonator is.");
 
         styleLinearSliderCompact(aprBaseHz, kAccentBlue);
         styleLabelDark(aprBaseHzL, "Base Hz", true);
@@ -2825,7 +2844,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         styleLabelDark(aprQL, "Q", true);
         addAndMakeVisible(aprQ);
         addAndMakeVisible(aprQL);
-        aprQ.setTooltip("Resonator bandwidth (higher = narrower peak).");
+        aprQ.setTooltip("Bandwidth (higher Q = narrower peak). Very high Q only passes a thin slice of spectrum — set Base Hz near strong content in the source, or expect a subtle tail.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "aprQ", aprQ));
         aprQ.textFromValueFunction = [](double v) { return juce::String(v, 2); };
         aprQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
