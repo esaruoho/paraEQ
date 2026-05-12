@@ -40,19 +40,19 @@ namespace
     constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
     constexpr int kCoeffUpdateInterval = 4;
 
-    /** ThrillMe defaults: 50% travel on Spectral, Threshold, and Ratio (original hardware centre), not “transparent” extremes. */
+    /** Spectral default: mid travel. Threshold/ratio defaults are transparent (no GR) until user dials them. */
     constexpr float kThrillSpecDefault = 0.5f;
 
+    /** 0 dB = do not compress until band envelope exceeds full scale (line-level mixes stay open). */
     inline float thrillThresholdDefaultDb() noexcept
     {
-        static const juce::NormalisableRange<float> r(-80.0f, 0.0f, 0.1f, 0.32f);
-        return r.convertFrom0to1(0.5f);
+        return 0.0f;
     }
 
+    /** Stored value 129 - R = 1 (true 1:1); wet path matches dry dynamics until ratio is turned harder. */
     inline float thrillRatioDefaultStored() noexcept
     {
-        static const juce::NormalisableRange<float> r(1.0f, 128.0f, 0.1f, 0.35f);
-        return r.convertFrom0to1(0.5f);
+        return 128.0f;
     }
 
     using C = std::complex<double>;
@@ -1733,6 +1733,11 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     delta = paketti::dcBlockIir(delta, pakettiChebyDcX1[i], pakettiChebyDcY1[i]);
                 x += shaperMix * delta;
             }
+            // EQ-tab Dirt/Crunch: always audible when ThrillMe 1 is in the mix (Roast Low/Mid taps are optional extra).
+            const float dirtThrillBus = juce::jlimit(0.f, 0.55f, effPre * (0.42f * coreDirt + 0.28f * coreCrunch));
+            if (dirtThrillBus > 1.0e-7f)
+                x = applyCoreSaturation(x, dirtThrillBus, coreDirt, coreCrunch, coreDcPre[i], coreDcLeakCoeffProc, roastCoreShapeIdx);
+
             const float beforeEq = x;
             x = lowShelfPerChannel[i].processSample(x);
             if (roastLowChainAmt > 1.0e-6f)
@@ -2190,6 +2195,10 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
             apvtsSetBool01(ap, "core2Bypass", false);
             apvtsSetFloatPlain(ap, "coreSat", 1.f);
             apvtsSetFloatPlain(ap, "core2Sat", 1.f);
+            apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);
+            apvtsSetFloatPlain(ap, "thrill2ThreshDb", 0.f);
+            apvtsSetFloatPlain(ap, "thrill1Ratio", 128.f);
+            apvtsSetFloatPlain(ap, "thrill2Ratio", 128.f);
             zeroRoast();
             flatEq();
             motionOff();

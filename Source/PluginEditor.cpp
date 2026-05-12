@@ -55,8 +55,9 @@ namespace
     /** Outer margin from tab content to graph stack (EQ tab + Curve tab must match for zero horizontal jump). */
     constexpr int kPeqTabPanelMargin = 8;
 
-    /** Max outer height of the EQ tab magnitude panel; Curve tab lower IIR plot uses the same cap for parity. */
-    constexpr int kEqMagGraphMaxOuterH = 158;
+    /** EQ tab: main spectrum/curve lives in the editor chrome above tabs; no duplicate strip in the scroll view. */
+    constexpr int kEqGraphMinOuterH = 0;
+    constexpr int kEqMagGraphMaxOuterH = 0;
 
     /** Invisible hit target so help text lives in tooltips only (saves vertical space). */
     struct TooltipMouseProxy : juce::Component, juce::SettableTooltipClient
@@ -101,10 +102,10 @@ namespace
         g.fillRoundedRectangle(fill, 2.f);
     }
 
-    void styleBigMasterMixKnob(juce::Slider& s)
+    void styleTopBarMixKnob(juce::Slider& s)
     {
         s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
         s.setColour(juce::Slider::rotarySliderFillColourId, kAccentGreen);
         s.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff444444));
         s.setColour(juce::Slider::thumbColourId, kAccentBlue);
@@ -199,8 +200,11 @@ namespace
         {
             return gapAfterGraph + motionLineH + gapAfterMotion + coreStripH() + gapBeforeBands + bandMotionPairH();
         }
-        /** Minimum total content height when the tab is scrollable (small graph strip + all controls). */
-        static constexpr int minimumContentHeight() noexcept { return chromeBelowGraph() + 16; }
+        /** Minimum total content height: chrome + EQ graph strip + tab vertical margins (otherwise graphH == 0). */
+        static constexpr int minimumContentHeight() noexcept
+        {
+            return chromeBelowGraph() + 2 * kPeqTabPanelMargin + kEqGraphMinOuterH;
+        }
     };
 
     void styleEqSlider(juce::Slider& s, juce::Colour arcFill)
@@ -1700,7 +1704,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         styleLabel(coreDirtLabel, "Dirt");
         addAndMakeVisible(coreDirt);
         addAndMakeVisible(coreDirtLabel);
-        coreDirt.setTooltip("Asymmetric curve for the saturators between EQ bands (Roast Low / Roast Mid on the Roast tab). Not the ThrillMe waveshape. Inactive in Linear EQ only mode.");
+        coreDirt.setTooltip("Asymmetric curve: always shapes a little on the ThrillMe 1 wet bus (before EQ), stronger with Mix % and Dirt %; plus the Roast Low/Mid taps between EQ bands. Inactive in Linear EQ only mode.");
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "coreDirt", coreDirt));
         coreDirt.textFromValueFunction = [](double v)
         {
@@ -3316,10 +3320,10 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     meterInLabel.setTooltip("Smoothed block RMS at the plugin audio input (monitoring).");
     meterOutLabel.setTooltip("Smoothed block RMS at the plugin audio output (monitoring).");
 
-    styleBigMasterMixKnob(masterDryWetSlider);
+    styleTopBarMixKnob(masterDryWetSlider);
     masterDryWetCaption.setText("Dry/Wet", juce::dontSendNotification);
     masterDryWetCaption.setJustificationType(juce::Justification::centred);
-    masterDryWetCaption.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    masterDryWetCaption.setFont(juce::Font(juce::FontOptions(9.0f)));
     masterDryWetCaption.setColour(juce::Label::textColourId, kTextBright.withAlpha(0.9f));
     masterDryWetSlider.setTooltip("Parallel mix of dry input vs the full processed chain (EQ, ThrillMe, Roast, output limiter, etc.). 0% = dry only, 100% = wet only. Default 100%.");
     masterDryWetSlider.textFromValueFunction = [](double v)
@@ -3338,7 +3342,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     setLookAndFeel(&pluginSliderValueLf);
 
-    setSize(900, 820);
+    setSize(900, 900);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
@@ -3352,32 +3356,31 @@ void ParaEQ301AudioProcessorEditor::paint(juce::Graphics& g)
     g.fillAll(kPanelBlack);
     paintLevelMeterBar(g, meterInBarBounds, meterNormalisedFromRms(proc.getDebugInputRms()), kAccentGreen);
     paintLevelMeterBar(g, meterOutBarBounds, meterNormalisedFromRms(proc.getDebugOutputRms()), kAccentBlue);
+    if (mainSpectrumCurveBounds.getHeight() >= 48 && mainSpectrumCurveBounds.getWidth() >= 120)
+        paintMergedSpectrumAndEqInRect(g, mainSpectrumCurveBounds, proc, mainCurveFreqHz, mainCurveMagScratch,
+                                       mainCurveEqSmoothed, mainCurveComboSmoothed, mainCurveSpecBefore, mainCurveSpecAfter);
 }
 
 void ParaEQ301AudioProcessorEditor::resized()
 {
-    constexpr int kMeterTop = 5;
-    constexpr int kLineH = 15;
-    constexpr int kBarH = 12;
-    constexpr int kLabelW = 122;
+    constexpr int kMeterTop = 4;
+    constexpr int kLineH = 14;
+    constexpr int kBarH = 11;
+    constexpr int kLabelW = 118;
     constexpr int kPad = 8;
-    constexpr int kGapLabelBar = 5;
-    constexpr int kBigMixKnob = 86;
-    constexpr int kMixTextBoxH = 20;
-    constexpr int kMixCaptionH = 14;
-    constexpr int kMixGap = 4;
-    constexpr int kMixColW = kBigMixKnob + 16;
-    constexpr int kMeterStripH = juce::jmax(kMeterTop + kLineH + kMeterTop + 4,
-                                            6 + kBigMixKnob + kMixTextBoxH + kMixGap + kMixCaptionH + 4);
+    constexpr int kGapLabelBar = 4;
+    constexpr int kTopStripH = 30;
+    constexpr int kMixColOuterW = 128;
+    constexpr int kCurveMaxH = 260;
+    constexpr int kTabMinRemainH = 260;
 
-    const int w = juce::jmax(200, getWidth());
-    auto topStrip = getLocalBounds();
-    const int stripH = kMeterStripH;
-    topStrip.setHeight(stripH);
-    auto mixCol = topStrip.removeFromRight(kMixColW + kPad);
+    auto belowTabsTop = getLocalBounds();
+    auto topStrip = belowTabsTop.removeFromTop(kTopStripH);
+    auto mixCol = topStrip.removeFromRight(kMixColOuterW + kPad);
     mixCol.removeFromRight(kPad);
+
     const int meterTotalW = topStrip.getWidth();
-    const int half = meterTotalW / 2;
+    const int half = juce::jmax(1, meterTotalW / 2);
 
     meterInLabel.setBounds(kPad + topStrip.getX(), kMeterTop, kLabelW, kLineH);
     const int inBarX = kPad + kLabelW + kGapLabelBar + topStrip.getX();
@@ -3391,14 +3394,17 @@ void ParaEQ301AudioProcessorEditor::resized()
     meterOutBarBounds = { outBarX, kMeterTop + 1, outBarW, kBarH };
 
     {
-        const int mx = mixCol.getCentreX() - kBigMixKnob / 2;
-        const int my = 6;
-        masterDryWetSlider.setBounds(mx, my, kBigMixKnob, kBigMixKnob + kMixTextBoxH + 2);
-        masterDryWetCaption.setBounds(mixCol.getX() + 2, masterDryWetSlider.getBottom() + kMixGap,
-                                      mixCol.getWidth() - 4, kMixCaptionH);
+        const int knobH = kTopStripH - 12;
+        masterDryWetSlider.setBounds(mixCol.getX() + 2, 3, juce::jmax(72, mixCol.getWidth() - 4), knobH);
+        masterDryWetCaption.setBounds(mixCol.getX() + 2, kTopStripH - 10, mixCol.getWidth() - 4, 9);
     }
 
-    tabs.setBounds(0, stripH, w, getHeight() - stripH);
+    int availForCurveAndTabs = belowTabsTop.getHeight();
+    int curveH = juce::jlimit(48, kCurveMaxH, availForCurveAndTabs - kTabMinRemainH);
+
+    auto curveArea = belowTabsTop.removeFromTop(curveH);
+    mainSpectrumCurveBounds = curveArea.reduced(kPad, 4);
+    tabs.setBounds(belowTabsTop);
 }
 
 void ParaEQ301AudioProcessorEditor::timerCallback()

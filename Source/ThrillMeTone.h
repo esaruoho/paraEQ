@@ -136,14 +136,19 @@ public:
             const float t = juce::jmin(6.f, overDb * 0.11f);
             const float overShape = std::exp(t) - 1.f;
             float redDb = overShape * (1.f - 1.f / R);
-            redDb = juce::jmin(48.f, redDb);
-            return juce::Decibels::decibelsToGain(-redDb);
+            redDb = juce::jmin(36.f, redDb);
+            // Floor: per-band GR must not mute a band (unlinked gains used to sum to << dry and kill output).
+            return juce::jmax(0.22f, juce::Decibels::decibelsToGain(-redDb));
         };
 
         const float gL = bandGain(st.eL);
         const float gM = bandGain(st.eM);
         const float gH = bandGain(st.eH);
         float sum = low * gL + mid * gM + high * gH;
+        // When L/M/H gains diverge, sum != y and can cancel; crossfade toward full-band y to preserve level.
+        const float spread = (std::abs(gL - gM) + std::abs(gM - gH) + std::abs(gL - gH)) * (1.f / 3.f);
+        const float cross = juce::jmin(0.45f, spread * 0.35f);
+        sum = sum * (1.f - cross) + y * cross;
         // Limiter: mathematical waveshaping (spec) — soft clip / tame overshoots after band sum.
         sum = std::tanh(1.28f * sum);
         if (!std::isfinite(sum))

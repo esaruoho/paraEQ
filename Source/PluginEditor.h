@@ -56,6 +56,14 @@ private:
 
     juce::Slider masterDryWetSlider;
     juce::Label masterDryWetCaption;
+    /** FFT + IIR curve between top meter strip and tabbed pages (same paint as Curve / old EQ graph). */
+    juce::Rectangle<int> mainSpectrumCurveBounds;
+    std::vector<double> mainCurveFreqHz;
+    std::vector<float> mainCurveMagScratch;
+    std::vector<float> mainCurveEqSmoothed;
+    std::vector<float> mainCurveComboSmoothed;
+    std::vector<float> mainCurveSpecBefore;
+    std::vector<float> mainCurveSpecAfter;
 
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> attachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
