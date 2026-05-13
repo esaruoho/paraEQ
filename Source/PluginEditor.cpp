@@ -1901,6 +1901,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterGraph);
         {
             auto motionRow = bounds.removeFromTop((int) PeqEqTabLayoutMetrics::motionLineH);
+            motionRow.removeFromRight(32); // reserve top-right corner for the (?) info button
             constexpr int kEqBalToggleW = 196;
             const int tw = juce::jmin(kEqBalToggleW, juce::jmax(140, motionRow.getWidth() / 3));
             auto balArea = motionRow.removeFromRight(tw);
@@ -1924,8 +1925,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             auto divArea = motionRow.removeFromLeft(divW);
             lfoHostSyncToggle.setBounds(syncArea.getX() + 1, rowCy, juce::jmax(1, syncArea.getWidth() - 2), 22);
             lfoHostSyncDivBox.setBounds(divArea.reduced(2, 3));
-            auto infoArea = motionRow.removeFromLeft(26);
-            motionInfoBtn.setBounds(infoArea.getX() + 1, rowCy, 22, 22);
+            motionInfoBtn.setBounds(getWidth() - 32, 4, 24, 22);
             motionStatus.setBounds(motionRow.reduced(4, 0));
         }
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterMotion);
@@ -2190,10 +2190,10 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component,
     void resized() override
     {
         auto b = getLocalBounds().reduced(10, 10);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
         constexpr int kRow = 40;
         auto row = b.removeFromTop(kRow);
-        infoBtn.setBounds(row.removeFromRight(26).reduced(0, 8));
-        row.removeFromRight(6);
+        row.removeFromRight(32);
         constexpr int kLimToggleW = 92;
         limOn.setBounds(row.removeFromLeft(juce::jmin(kLimToggleW, juce::jmax(72, row.getWidth() / 5))).reduced(0, 5));
         row.removeFromLeft(10);
@@ -2513,9 +2513,9 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         oversampleLabel.setBounds(top.removeFromLeft(22).reduced(0, 4));
         oversampleBox.setBounds(top.removeFromLeft(72).reduced(0, 2));
         b.removeFromTop(6);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
         auto linRow = b.removeFromTop(22);
-        infoBtn.setBounds(linRow.removeFromRight(26));
-        linRow.removeFromRight(4);
+        linRow.removeFromRight(32);
         linearEqToggle.setBounds(linRow);
         b.removeFromTop(6);
 
@@ -2749,9 +2749,9 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
         auto toggles = b.removeFromTop(26);
-        infoBtn.setBounds(toggles.removeFromRight(26));
-        toggles.removeFromRight(4);
+        toggles.removeFromRight(32);
         univBellToggle.setBounds(toggles.removeFromLeft(220));
         toggles.removeFromLeft(12);
         anharmOnToggle.setBounds(toggles.removeFromLeft(200));
@@ -2952,9 +2952,9 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
         auto toggles = b.removeFromTop(26);
-        infoBtn.setBounds(toggles.removeFromRight(26));
-        toggles.removeFromRight(4);
+        toggles.removeFromRight(32);
         aprEnableToggle.setBounds(toggles.removeFromLeft(280));
         b.removeFromTop(6);
         constexpr int kParamRows = 7;
