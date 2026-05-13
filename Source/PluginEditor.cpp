@@ -3349,9 +3349,9 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
         auto modeRow = b.removeFromTop(26);
-        infoBtn.setBounds(modeRow.removeFromRight(26));
-        modeRow.removeFromRight(4);
+        modeRow.removeFromRight(32);
         shaperModeL.setBounds(modeRow.removeFromLeft(100));
         shaperModeBox.setBounds(modeRow.removeFromLeft(juce::jmin(280, modeRow.getWidth())));
         b.removeFromTop(6);
