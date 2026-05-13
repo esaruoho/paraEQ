@@ -1350,6 +1350,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     juce::Slider coreLifeHz;
     juce::Label coreLifeHzLabel;
     juce::Label motionStatus;
+    juce::TextButton motionInfoBtn;
     juce::ToggleButton lfoHostSyncToggle { "BPM sync" };
     juce::ComboBox lfoHostSyncDivBox;
     juce::ToggleButton eqPinkBalToggle { "EQ level balance" };
@@ -1546,7 +1547,24 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         processor.getMotionEffectiveEqSnapshot(snap0);
         motionStatus.setText(buildEqMotionStatusShort(ap, snap0), juce::dontSendNotification);
         motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, snap0));
+        motionStatus.setVisible(false);
         addAndMakeVisible(motionStatus);
+        motionInfoBtn.setButtonText("?");
+        motionInfoBtn.setTooltip("Motion status / live LFO readout");
+        motionInfoBtn.onClick = [this]
+        {
+            auto content = std::make_unique<juce::Label>();
+            content->setText(motionStatus.getText() + "\n\n" + motionStatus.getTooltip(), juce::dontSendNotification);
+            content->setJustificationType(juce::Justification::topLeft);
+            content->setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+            content->setColour(juce::Label::textColourId, juce::Colours::white);
+            content->setColour(juce::Label::backgroundColourId, juce::Colour(0xff1a1a1a));
+            content->setBorderSize(juce::BorderSize<int>(10, 12, 10, 12));
+            content->setMinimumHorizontalScale(1.0f);
+            content->setSize(440, 220);
+            juce::CallOutBox::launchAsynchronously(std::move(content), motionInfoBtn.getScreenBounds(), nullptr);
+        };
+        addAndMakeVisible(motionInfoBtn);
 
         styleToggleDark(eqPinkBalToggle);
         eqPinkBalToggle.setTooltip(
@@ -1890,8 +1908,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             eqPinkBalToggle.setBounds(balArea.getX() + 2, bcy, balArea.getWidth() - 4, 22);
 
             const int rowCy = motionRow.getCentreY() - 11;
-            int syncW = juce::jlimit(56, 78, motionRow.getWidth() / 7);
-            int divW = juce::jlimit(88, 124, motionRow.getWidth() / 4);
+            int syncW = juce::jlimit(110, 140, motionRow.getWidth() / 5);
+            int divW = juce::jlimit(96, 130, motionRow.getWidth() / 4);
             const int minStatus = 48;
             if (syncW + divW + minStatus > motionRow.getWidth())
             {
@@ -1906,6 +1924,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             auto divArea = motionRow.removeFromLeft(divW);
             lfoHostSyncToggle.setBounds(syncArea.getX() + 1, rowCy, juce::jmax(1, syncArea.getWidth() - 2), 22);
             lfoHostSyncDivBox.setBounds(divArea.reduced(2, 3));
+            auto infoArea = motionRow.removeFromLeft(26);
+            motionInfoBtn.setBounds(infoArea.getX() + 1, rowCy, 22, 22);
             motionStatus.setBounds(motionRow.reduced(4, 0));
         }
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterMotion);

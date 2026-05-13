@@ -1613,13 +1613,9 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const int chebyMaxN = paketti::chebyMaxActiveN(harmScaled);
     const bool chebyHarmonicsOn = chebyMaxN > 1;
     const bool chebyCurveDc = paketti::chebyCurveHasDc(chebyYL, chebyYC, chebyYR);
-    bool chebyPolyPowNonUnity = std::abs(chebyPolyPow - 1.f) > 1.0e-4f;
-    if (!chebyPolyPowNonUnity)
-    {
-        for (int hi = 0; hi < 12; ++hi)
-            if (std::abs(chebyPolyPow12[(size_t) hi] - 1.f) > 1.0e-4f) { chebyPolyPowNonUnity = true; break; }
-    }
-    const bool chebyNeedsDcBlock = chebyCurveDc || chebyPolyPowNonUnity;
+    // Cheby DC blocker: any even-order harmonic (T2/T4/.../T12) introduces DC, as do the curve or per-poly pow. Run always in cheby mode.
+    const bool chebyNeedsDcBlock = (shaperModeIdx == 2);
+    juce::ignoreUnused(chebyCurveDc);
     const bool shaperEngaged = (!linearListen && shaperModeIdx > 0 && shaperMix > 1.0e-7f
                                  && ((shaperModeIdx == 1) || (shaperModeIdx == 2 && chebyHarmonicsOn)));
 
