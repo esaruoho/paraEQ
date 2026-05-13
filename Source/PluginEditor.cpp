@@ -3412,7 +3412,6 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     outPage = std::make_unique<OutTabContent>(proc, ap, attachments, buttonAttachments);
 
     tabs.addTab("EQ", kPanelBlack, eqTabScroll.get(), false);
-    tabs.addTab("Curve", kPanelBlack, curveMotionPage.get(), false);
     tabs.addTab("Roast", kPanelBlack, roastTabScroll.get(), false);
     tabs.addTab("Shaper", kPanelBlack, shaperTabScroll.get(), false);
     tabs.addTab("Anharm", kPanelBlack, anharmTabScroll.get(), false);
@@ -3495,7 +3494,7 @@ void ParaEQ301AudioProcessorEditor::resized()
     constexpr int kGapLabelBar = 4;
     constexpr int kTopStripH = 30;
     constexpr int kMixColOuterW = 128;
-    constexpr int kCurveMaxH = 260;
+    constexpr int kCurveMaxH = 80;
     constexpr int kTabMinRemainH = 260;
 
     auto belowTabsTop = getLocalBounds();
