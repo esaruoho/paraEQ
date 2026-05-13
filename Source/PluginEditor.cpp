@@ -3368,64 +3368,61 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
 
         juce::ignoreUnused(kParamRows);
 
-        constexpr int kColW = 72;
+        // Single row of all main controls per mode; H/Pow detail sliders 12-per-row when shown.
         constexpr int kColH = 110;
-        constexpr int kColGap = 4;
+        const int colCountMain = magOn ? 11 : (chebyOn ? 8 : 3);
+        const int availW = b.getWidth();
+        const int colWMain = juce::jlimit(48, 80, (availW - 4) / juce::jmax(1, colCountMain) - 2);
+        const int colWDetail = juce::jlimit(40, 70, (availW - 4) / 12 - 2);
 
-        auto placeVertRow = [&](std::initializer_list<std::pair<juce::Label*, juce::Slider*>> cols)
+        auto placeRowCols = [&](std::initializer_list<std::pair<juce::Label*, juce::Slider*>> cols, int colW)
         {
             auto row = b.removeFromTop(kColH);
             for (auto& [lab, sl] : cols)
-                placeVertCol(row, *lab, *sl, kColW);
+                placeVertCol(row, *lab, *sl, colW);
         };
-
-        // Shared shaper IO (always visible).
-        placeVertRow({ {&shaperMixL, &shaperMix}, {&shaperPreGainL, &shaperPreGain}, {&shaperPostTrimL, &shaperPostTrim} });
-        b.removeFromTop(6);
 
         if (magOn)
         {
             auto mh = b.removeFromTop(20);
             magnetHead.setBounds(mh.getX(), mh.getY(), 260, 18);
-            // 8 vertical sliders + Sat type combo.
-            placeVertRow({ {&magDriveL,&magDrive}, {&magTiltL,&magTilt}, {&magBiasL,&magBias}, {&magTiltLimitL,&magTiltLimit},
-                           {&magFeedbackL,&magFeedback}, {&magOutL,&magOut}, {&magEnergyL,&magEnergy}, {&magEnergyMsL,&magEnergyMs} });
+            placeRowCols({ {&shaperMixL,&shaperMix}, {&shaperPreGainL,&shaperPreGain}, {&shaperPostTrimL,&shaperPostTrim},
+                           {&magDriveL,&magDrive}, {&magTiltL,&magTilt}, {&magBiasL,&magBias},
+                           {&magTiltLimitL,&magTiltLimit}, {&magFeedbackL,&magFeedback}, {&magOutL,&magOut},
+                           {&magEnergyL,&magEnergy}, {&magEnergyMsL,&magEnergyMs} }, colWMain);
             b.removeFromTop(6);
             auto shapeRow = b.removeFromTop(28);
             magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, 80, 20);
             magShape.setBounds(shapeRow.getX() + 84, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - 84), 24);
             b.removeFromTop(4);
         }
-
-        if (chebyOn)
+        else if (chebyOn)
         {
             auto ch = b.removeFromTop(20);
             chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
-            placeVertRow({ {&chebyHarmMacroL,&chebyHarmMacro}, {&chebyPolyPowL,&chebyPolyPow},
-                           {&chebyYLL,&chebyYL}, {&chebyYCL,&chebyYC}, {&chebyYRL,&chebyYR} });
+            placeRowCols({ {&shaperMixL,&shaperMix}, {&shaperPreGainL,&shaperPreGain}, {&shaperPostTrimL,&shaperPostTrim},
+                           {&chebyHarmMacroL,&chebyHarmMacro}, {&chebyPolyPowL,&chebyPolyPow},
+                           {&chebyYLL,&chebyYL}, {&chebyYCL,&chebyYC}, {&chebyYRL,&chebyYR} }, colWMain);
             b.removeFromTop(6);
             auto detRow = b.removeFromTop(28);
             chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
             b.removeFromTop(4);
             if (detailOn)
             {
-                // 12 H sliders in two rows of 6, then 12 Pow sliders in two rows of 6.
-                for (int rowStart = 0; rowStart < 12; rowStart += 6)
-                {
-                    auto row = b.removeFromTop(kColH);
-                    for (int i = 0; i < 6 && (rowStart + i) < 12; ++i)
-                        placeVertCol(row, chebyHL[(size_t) (rowStart + i)], chebyH[(size_t) (rowStart + i)], kColW);
-                    b.removeFromTop(2);
-                }
-                for (int rowStart = 0; rowStart < 12; rowStart += 6)
-                {
-                    auto row = b.removeFromTop(kColH);
-                    for (int i = 0; i < 6 && (rowStart + i) < 12; ++i)
-                        placeVertCol(row, chebyHPowL[(size_t) (rowStart + i)], chebyHPow[(size_t) (rowStart + i)], kColW);
-                    b.removeFromTop(2);
-                }
-                juce::ignoreUnused(kColGap);
+                // 12 H weights on one row, 12 H pow on one row.
+                auto hRow = b.removeFromTop(kColH);
+                for (int i = 0; i < 12; ++i)
+                    placeVertCol(hRow, chebyHL[(size_t) i], chebyH[(size_t) i], colWDetail);
+                b.removeFromTop(2);
+                auto pRow = b.removeFromTop(kColH);
+                for (int i = 0; i < 12; ++i)
+                    placeVertCol(pRow, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], colWDetail);
+                b.removeFromTop(2);
             }
+        }
+        else
+        {
+            placeRowCols({ {&shaperMixL,&shaperMix}, {&shaperPreGainL,&shaperPreGain}, {&shaperPostTrimL,&shaperPostTrim} }, colWMain);
         }
     }
 };
