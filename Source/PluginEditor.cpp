@@ -30,6 +30,18 @@ juce::Label* PeqPluginSliderValueLookAndFeel::createSliderTextBox(juce::Slider& 
 
 namespace
 {
+    /** Convert a long-text Label into a "(?)" button. Hides the source label; click opens AlertWindow with its text. */
+    inline void wireInfoButton(juce::TextButton& btn, juce::Label& source, const juce::String& title)
+    {
+        btn.setButtonText("?");
+        btn.setTooltip("Show description");
+        btn.onClick = [src = &source, t = title]
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, t, src->getText(true));
+        };
+        source.setVisible(false);
+    }
+
     constexpr int kKnobSize = 52;
     // Rotary + TextBoxBelow must live inside setBounds height; captions go below getBottom().
     constexpr int kTextBoxH = 18;
@@ -2077,6 +2089,7 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component,
     juce::Slider limRelease;
     juce::Label lfoDebugReadout;
     juce::Label note;
+    juce::TextButton infoBtn;
 
     OutTabContent(ParaEQ301AudioProcessor& processor,
                   juce::AudioProcessorValueTreeState& ap,
@@ -2122,6 +2135,8 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component,
         note.setJustificationType(juce::Justification::topLeft);
         note.setFont(juce::Font(juce::FontOptions().withHeight(11.5f)));
         addAndMakeVisible(note);
+        wireInfoButton(infoBtn, note, "Output");
+        addAndMakeVisible(infoBtn);
 
         startTimerHz(24);
     }
@@ -2142,6 +2157,8 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component,
         auto b = getLocalBounds().reduced(10, 10);
         constexpr int kRow = 40;
         auto row = b.removeFromTop(kRow);
+        infoBtn.setBounds(row.removeFromRight(26).reduced(0, 8));
+        row.removeFromRight(6);
         constexpr int kLimToggleW = 92;
         limOn.setBounds(row.removeFromLeft(juce::jmin(kLimToggleW, juce::jmax(72, row.getWidth() / 5))).reduced(0, 5));
         row.removeFromLeft(10);
@@ -2150,11 +2167,8 @@ struct ParaEQ301AudioProcessorEditor::OutTabContent : public juce::Component,
         row.removeFromLeft(8);
         limRelease.setBounds(row.removeFromLeft(sw));
         b.removeFromTop(12);
-        constexpr int kDebugMinH = 96;
-        const int dbgH = juce::jmax(kDebugMinH, (b.getHeight() * 12) / 25);
+        const int dbgH = b.getHeight();
         lfoDebugReadout.setBounds(b.removeFromTop(dbgH).reduced(0, 2));
-        b.removeFromTop(8);
-        note.setBounds(b);
     }
 };
 
@@ -2216,6 +2230,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     juce::ComboBox oversampleBox;
     juce::ToggleButton linearEqToggle { "Linear EQ only (RBJ A/B)" };
     juce::Label intro;
+    juce::TextButton infoBtn;
     juce::Slider coreCrunch;
     juce::Label coreCrunchL;
     juce::Label roastCoreShapeL;
@@ -2315,6 +2330,8 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
                                      .withName(juce::Font::getDefaultMonospacedFontName())
                                      .withHeight(11.0f)));
         addAndMakeVisible(intro);
+        wireInfoButton(infoBtn, intro, "Roast");
+        addAndMakeVisible(infoBtn);
 
         auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
         {
@@ -2461,17 +2478,10 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         oversampleLabel.setBounds(top.removeFromLeft(22).reduced(0, 4));
         oversampleBox.setBounds(top.removeFromLeft(72).reduced(0, 2));
         b.removeFromTop(6);
-        linearEqToggle.setBounds(b.removeFromTop(22));
-        b.removeFromTop(6);
-
-        const int introW = juce::jmax(1, b.getWidth());
-        juce::AttributedString introCopy(intro.getText(true));
-        introCopy.setFont(intro.getFont());
-        introCopy.setColour(intro.findColour(juce::Label::textColourId));
-        juce::TextLayout introLayout;
-        introLayout.createLayout(introCopy, (float) introW);
-        const int introH = juce::jlimit(28, 100, juce::roundToInt(introLayout.getHeight()) + 6);
-        intro.setBounds(b.removeFromTop(introH));
+        auto linRow = b.removeFromTop(22);
+        infoBtn.setBounds(linRow.removeFromRight(26));
+        linRow.removeFromRight(4);
+        linearEqToggle.setBounds(linRow);
         b.removeFromTop(6);
 
         constexpr int kRoastSliderRows = 9;
@@ -2549,6 +2559,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
 {
     juce::Label intro;
+    juce::TextButton infoBtn;
     juce::ToggleButton univBellToggle { "Universal bell (Orfanidis)" };
     juce::ToggleButton anharmOnToggle { "Inharmonic partial bank" };
     juce::Slider anharmFund;
@@ -2591,6 +2602,8 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
                                      .withName(juce::Font::getDefaultMonospacedFontName())
                                      .withHeight(11.0f)));
         addAndMakeVisible(intro);
+        wireInfoButton(infoBtn, intro, "Anharm");
+        addAndMakeVisible(infoBtn);
 
         styleToggleDark(univBellToggle);
         univBellToggle.setTooltip("When on, Mid1/Mid2 use Orfanidis peaking design (Dw from Q via sinh mapping, Gb=sqrt(G)).");
@@ -2697,16 +2710,9 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
-        const int introW = juce::jmax(1, b.getWidth());
-        juce::AttributedString introCopy(intro.getText(true));
-        introCopy.setFont(intro.getFont());
-        introCopy.setColour(intro.findColour(juce::Label::textColourId));
-        juce::TextLayout introLayout;
-        introLayout.createLayout(introCopy, (float) introW);
-        const int introH = juce::jlimit(36, 120, juce::roundToInt(introLayout.getHeight()) + 8);
-        intro.setBounds(b.removeFromTop(introH));
-        b.removeFromTop(6);
         auto toggles = b.removeFromTop(26);
+        infoBtn.setBounds(toggles.removeFromRight(26));
+        toggles.removeFromRight(4);
         univBellToggle.setBounds(toggles.removeFromLeft(220));
         toggles.removeFromLeft(12);
         anharmOnToggle.setBounds(toggles.removeFromLeft(200));
@@ -2785,6 +2791,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabScrollHost : public juce::Viewpor
 struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Component
 {
     juce::Label intro;
+    juce::TextButton infoBtn;
     juce::ToggleButton aprEnableToggle { "APR" };
     juce::Slider aprMix;
     juce::Label aprMixL;
@@ -2821,6 +2828,8 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
                                      .withName(juce::Font::getDefaultMonospacedFontName())
                                      .withHeight(11.0f)));
         addAndMakeVisible(intro);
+        wireInfoButton(infoBtn, intro, "APR");
+        addAndMakeVisible(infoBtn);
 
         styleToggleDark(aprEnableToggle);
         aprEnableToggle.setTooltip("Parallel bandpass resonator. Needs Mix % > 0 to hear wet signal.");
@@ -2904,16 +2913,9 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
-        const int introW = juce::jmax(1, b.getWidth());
-        juce::AttributedString introCopy(intro.getText(true));
-        introCopy.setFont(intro.getFont());
-        introCopy.setColour(intro.findColour(juce::Label::textColourId));
-        juce::TextLayout introLayout;
-        introLayout.createLayout(introCopy, (float) introW);
-        const int introH = juce::jlimit(40, 140, juce::roundToInt(introLayout.getHeight()) + 10);
-        intro.setBounds(b.removeFromTop(introH));
-        b.removeFromTop(6);
         auto toggles = b.removeFromTop(26);
+        infoBtn.setBounds(toggles.removeFromRight(26));
+        toggles.removeFromRight(4);
         aprEnableToggle.setBounds(toggles.removeFromLeft(280));
         b.removeFromTop(6);
         constexpr int kParamRows = 7;
@@ -2963,6 +2965,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabScrollHost : public juce::Vie
 struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
 {
     juce::Label intro;
+    juce::TextButton infoBtn;
     juce::Label shaperModeL;
     juce::ComboBox shaperModeBox;
     juce::Slider shaperMix;
@@ -3031,6 +3034,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
                                      .withName(juce::Font::getDefaultMonospacedFontName())
                                      .withHeight(11.0f)));
         addAndMakeVisible(intro);
+        wireInfoButton(infoBtn, intro, "Shaper");
+        addAndMakeVisible(infoBtn);
 
         styleLabelDark(shaperModeL, "Shaper mode", true);
         addAndMakeVisible(shaperModeL);
@@ -3257,16 +3262,9 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     void resized() override
     {
         auto b = getLocalBounds().reduced(8);
-        const int introW = juce::jmax(1, b.getWidth());
-        juce::AttributedString introCopy(intro.getText(true));
-        introCopy.setFont(intro.getFont());
-        introCopy.setColour(intro.findColour(juce::Label::textColourId));
-        juce::TextLayout introLayout;
-        introLayout.createLayout(introCopy, (float) introW);
-        const int introH = juce::jlimit(40, 140, juce::roundToInt(introLayout.getHeight()) + 10);
-        intro.setBounds(b.removeFromTop(introH));
-        b.removeFromTop(8);
         auto modeRow = b.removeFromTop(26);
+        infoBtn.setBounds(modeRow.removeFromRight(26));
+        modeRow.removeFromRight(4);
         shaperModeL.setBounds(modeRow.removeFromLeft(100));
         shaperModeBox.setBounds(modeRow.removeFromLeft(juce::jmin(280, modeRow.getWidth())));
         b.removeFromTop(6);
