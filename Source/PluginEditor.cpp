@@ -3525,7 +3525,7 @@ void ParaEQ301AudioProcessorEditor::resized()
     constexpr int kGapLabelBar = 4;
     constexpr int kTopStripH = 30;
     constexpr int kMixColOuterW = 128;
-    constexpr int kCurveMaxH = 80;
+    constexpr int kCurveMaxH = 320;
     constexpr int kTabMinRemainH = 260;
 
     auto belowTabsTop = getLocalBounds();
