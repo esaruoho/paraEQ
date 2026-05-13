@@ -164,6 +164,12 @@ namespace paketti
         return v / (1.f + a);
     }
 
+    /** tanh saturator (Lassi's stated MagnetShaper ingredient). */
+    inline float magnetTanhSat(float v) noexcept
+    {
+        return std::tanh(v);
+    }
+
     inline float magnetSlewLimit(float yTarget, float yPrev, float step) noexcept
     {
         const float dy = yTarget - yPrev;
@@ -196,20 +202,39 @@ namespace paketti
     struct MagnetShaperState
     {
         float y1 = 0.f;
+        float env = 0.f;   // energy accumulator (one-pole on |u|).
     };
 
-    /** u should be in [-1,1]. Returns shaped sample in [-1,1]. slewStep from magnetSlewStepFromLimit. */
-    inline float magnetProcessSample(float u, float drive, float tilt, float bias,
-                                     float feedback01, float magOut, float slewStep, MagnetShaperState& st) noexcept
+    /** Energy-follower coefficient from time constant in ms at sample rate. coeff = 1 - exp(-1 / (sr*tms*0.001)). */
+    inline float magnetEnergyCoeffFromMs(float tms, float sampleRate) noexcept
     {
+        const float t = juce::jmax(0.001f, tms) * 0.001f;
+        const float sr = juce::jmax(1.f, sampleRate);
+        return 1.f - std::exp(-1.f / (sr * t));
+    }
+
+    /** u should be in [-1,1]. Returns shaped sample in [-1,1]. slewStep from magnetSlewStepFromLimit.
+        shapeMode: 0 = algebraic softsat v/(1+|v|), 1 = tanh.
+        energyAmt (0..1): energy-accumulator depth into effective drive (Lassi's "energy accumulation in wave motion").
+        energyCoeff: one-pole coefficient from magnetEnergyCoeffFromMs(). */
+    inline float magnetProcessSample(float u, float drive, float tilt, float bias,
+                                     float feedback01, float magOut, float slewStep,
+                                     int shapeMode, float energyAmt, float energyCoeff,
+                                     MagnetShaperState& st) noexcept
+    {
+        // Energy accumulator on |u| -> modulates effective drive.
+        const float au = std::abs(u);
+        st.env += (au - st.env) * energyCoeff;
+        const float effDrive = drive + energyAmt * st.env * 2.0f;
+
         const float yPrev = st.y1;
         const float fbTerm = feedback01 * (0.5f * yPrev);
         float gp = 1.f, gn = 1.f;
-        magnetComputeGains(drive, tilt, bias, fbTerm, gp, gn);
+        magnetComputeGains(effDrive, tilt, bias, fbTerm, gp, gn);
         const float xp = (u > 0.f) ? u : 0.f;
         const float xn = (u < 0.f) ? u : 0.f;
-        const float yp = magnetSoftsat(gp * xp);
-        const float yn = magnetSoftsat(gn * xn);
+        const float yp = (shapeMode == 1) ? magnetTanhSat(gp * xp) : magnetSoftsat(gp * xp);
+        const float yn = (shapeMode == 1) ? magnetTanhSat(gn * xn) : magnetSoftsat(gn * xn);
         const float yLin = yp + yn;
         const float y = magnetSlewLimit(yLin, yPrev, slewStep);
         st.y1 = y;

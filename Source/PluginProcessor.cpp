@@ -385,14 +385,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("core1Bypass", "Bypass Saturator 1", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>("core1Bypass", "Bypass Saturator 1", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "coreSat", "ThrillMe 1 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         1.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>("core2Bypass", "Bypass Saturator 2", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "core2Sat", "ThrillMe 2 wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
@@ -708,6 +708,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::NormalisableRange<float>(0.2f, 2.0f, 0.01f),
         1.0f,
         juce::AudioParameterFloatAttributes().withLabel("x")));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "magShape", "Magnet sat type",
+        juce::StringArray { "Soft", "Tanh" },
+        0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magEnergy", "Magnet energy",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "magEnergyMs", "Magnet energy time",
+        juce::NormalisableRange<float>(1.0f, 500.0f, 0.1f, 0.4f),
+        80.0f,
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "chebyYL", "Cheby curve L",
@@ -896,6 +910,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         vaSvfPerChannel[i].reset();
         aprResonator[i].reset();
         pakettiMagnetState[i].y1 = 0.f;
+        pakettiMagnetState[i].env = 0.f;
         pakettiChebyDcX1[i] = 0.f;
         pakettiChebyDcY1[i] = 0.f;
         for (int p = 0; p < kAnharmMaxPartials; ++p)
@@ -1569,6 +1584,10 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float magTiltLimit = apvts.getRawParameterValue("magTiltLimit")->load();
     const float magFeedback = apvts.getRawParameterValue("magFeedback")->load();
     const float magOut = apvts.getRawParameterValue("magOut")->load();
+    const int magShape = (int) apvts.getRawParameterValue("magShape")->load();
+    const float magEnergy = apvts.getRawParameterValue("magEnergy")->load();
+    const float magEnergyMs = apvts.getRawParameterValue("magEnergyMs")->load();
+    const float magEnergyCoeff = paketti::magnetEnergyCoeffFromMs(magEnergyMs, (float) currentSampleRate);
     const float chebyYL = apvts.getRawParameterValue("chebyYL")->load();
     const float chebyYC = apvts.getRawParameterValue("chebyYC")->load();
     const float chebyYR = apvts.getRawParameterValue("chebyYR")->load();
@@ -1753,7 +1772,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     const float osF = (float) juce::jmax(1, specStride);
                     const float slewStep = paketti::magnetSlewStepFromLimit(magTiltLimit, osF);
                     y = paketti::magnetProcessSample(u, magDrive, magTilt, magBias, magFeedback, magOut,
-                                                     slewStep, pakettiMagnetState[i]);
+                                                     slewStep, magShape, magEnergy, magEnergyCoeff,
+                                                     pakettiMagnetState[i]);
                 }
                 else if (shaperModeIdx == 2 && chebyLutRead != nullptr)
                 {
@@ -2159,6 +2179,9 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         apvtsSetFloatPlain(ap, "magTiltLimit", 0.5f);
         apvtsSetFloatPlain(ap, "magFeedback", 0.f);
         apvtsSetFloatPlain(ap, "magOut", 1.f);
+        apvtsSetFloatPlain(ap, "magShape", 0.f);
+        apvtsSetFloatPlain(ap, "magEnergy", 0.f);
+        apvtsSetFloatPlain(ap, "magEnergyMs", 80.f);
         apvtsSetFloatPlain(ap, "chebyYL", -1.f);
         apvtsSetFloatPlain(ap, "chebyYC", 0.f);
         apvtsSetFloatPlain(ap, "chebyYR", 1.f);
@@ -2229,8 +2252,8 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
     {
         case 0:
             apvtsSetBool01(ap, "linearEqListen", false);
-            apvtsSetBool01(ap, "core1Bypass", false);
-            apvtsSetBool01(ap, "core2Bypass", false);
+            apvtsSetBool01(ap, "core1Bypass", true);
+            apvtsSetBool01(ap, "core2Bypass", true);
             apvtsSetFloatPlain(ap, "coreSat", 1.f);
             apvtsSetFloatPlain(ap, "core2Sat", 1.f);
             apvtsSetFloatPlain(ap, "thrill1ThreshDb", 0.f);

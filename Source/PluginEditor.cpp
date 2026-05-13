@@ -2984,6 +2984,12 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     juce::Label magFeedbackL;
     juce::Slider magOut;
     juce::Label magOutL;
+    juce::ComboBox magShape;
+    juce::Label magShapeL;
+    juce::Slider magEnergy;
+    juce::Label magEnergyL;
+    juce::Slider magEnergyMs;
+    juce::Label magEnergyMsL;
     juce::Label chebyHead;
     juce::Slider chebyHarmMacro;
     juce::Label chebyHarmMacroL;
@@ -3086,6 +3092,25 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         wirePct(magTiltLimit, magTiltLimitL, "magTiltLimit", "Slew %", "Higher = faster slew toward target (less low-pass on motion).");
         wirePct(magFeedback, magFeedbackL, "magFeedback", "Feedback %", "Feeds previous output into tilt (program-dependent).");
         wireMag(magOut, magOutL, "magOut", "Out", "Output gain inside Magnet path (before delta trim).");
+
+        styleLabelDark(magShapeL, "Sat type", true);
+        addAndMakeVisible(magShapeL);
+        magShape.addItem("Soft", 1);
+        magShape.addItem("Tanh", 2);
+        magShape.setTooltip("Saturator shape inside MagnetShaper. Soft = v/(1+|v|) (legacy). Tanh = std::tanh(v) (Lassi's stated ingredient).");
+        addAndMakeVisible(magShape);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "magShape", magShape));
+
+        wirePct(magEnergy, magEnergyL, "magEnergy", "Energy %",
+                "Energy accumulator (one-pole on |x|) feeding effective drive — Lassi's energy-accumulation-in-wave-motion ingredient. 0 = off.");
+        styleLinearSliderCompact(magEnergyMs, kAccentGreen);
+        styleLabelDark(magEnergyMsL, "Energy ms", true);
+        addAndMakeVisible(magEnergyMs);
+        addAndMakeVisible(magEnergyMsL);
+        magEnergyMs.setTooltip("Time constant for the energy follower (ms). Faster = more responsive, snappier; slower = sustained loudness drives the saturator.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "magEnergyMs", magEnergyMs));
+        magEnergyMs.textFromValueFunction = [](double v) { return juce::String(v, 1) + " ms"; };
+        magEnergyMs.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
 
         styleLabelDark(chebyHead, "Chebyshev curve & harmonics", true);
         chebyHead.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
@@ -3196,6 +3221,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         styleShaperReadout(magTiltLimit, kShPctW);
         styleShaperReadout(magFeedback, kShPctW);
         styleShaperReadout(magOut, kShMagW);
+        styleShaperReadout(magEnergy, kShPctW);
+        styleShaperReadout(magEnergyMs, kShPctW);
         styleShaperReadout(chebyHarmMacro, kShPctW);
         styleShaperReadout(chebyPolyPow, kShPctW);
         styleShaperReadout(chebyYL, kShChebyYW);
@@ -3213,7 +3240,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         constexpr int kIntroMax = 120;
         constexpr int kRowH = 32;
         const int harmRows = chebyDetailToggle.getToggleState() ? 24 : 0;
-        constexpr int kBaseSliderRows = 3 + 6 + 1 + 2 + 3;
+        constexpr int kBaseSliderRows = 3 + 9 + 1 + 2 + 3;
         const int kSliderRows = kBaseSliderRows + harmRows;
         constexpr int kSectionGap = 2 * 24;
         return kOuterPad + kIntroMax + 8 + 26 + 6 + kSliderRows * kRowH + kSectionGap + 32;
@@ -3260,6 +3287,13 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         placeWideSliderRow(b, magTiltLimitL, magTiltLimit, rowH, labelColW);
         placeWideSliderRow(b, magFeedbackL, magFeedback, rowH, labelColW);
         placeWideSliderRow(b, magOutL, magOut, rowH, labelColW);
+        {
+            auto shapeRow = b.removeFromTop(rowH);
+            magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, labelColW, rowH - 8);
+            magShape.setBounds(shapeRow.getX() + labelColW + 4, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - labelColW - 8), rowH - 4);
+        }
+        placeWideSliderRow(b, magEnergyL, magEnergy, rowH, labelColW);
+        placeWideSliderRow(b, magEnergyMsL, magEnergyMs, rowH, labelColW);
         auto ch = b.removeFromTop(22);
         chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
         placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
