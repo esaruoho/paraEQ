@@ -2477,7 +2477,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
         constexpr int kIntroCap = 96;
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 24;
+        constexpr int kRoastRowH = 32;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         return kChrome + kIntroCap + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
@@ -2500,7 +2500,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         b.removeFromTop(6);
 
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 24;
+        constexpr int kRoastRowH = 32;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         const int gridH = kRoastSliderRows * kRoastRowH + kGridPad;
@@ -2512,7 +2512,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 
         const int hBody = b.getHeight();
         const int gridHUse = juce::jmin(gridH, juce::jmax(kRoastSliderRows * 26, hBody - 72));
-        const int rowH = juce::jmin(kRoastRowH, juce::jmax(20, gridHUse / kRoastSliderRows));
+        const int rowH = juce::jmin(kRoastRowH, juce::jmax(26, gridHUse / kRoastSliderRows));
         auto gridBand = b.removeFromTop(gridHUse);
         constexpr int kRoastMidGutter = 8;
         const int inner = juce::jmax(1, gridBand.getWidth() - kRoastMidGutter);
