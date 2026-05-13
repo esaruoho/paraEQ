@@ -2477,7 +2477,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
         constexpr int kIntroCap = 96;
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 34;
+        constexpr int kRoastRowH = 24;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         return kChrome + kIntroCap + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
@@ -2500,7 +2500,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         b.removeFromTop(6);
 
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 34;
+        constexpr int kRoastRowH = 24;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         const int gridH = kRoastSliderRows * kRoastRowH + kGridPad;
@@ -2512,7 +2512,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 
         const int hBody = b.getHeight();
         const int gridHUse = juce::jmin(gridH, juce::jmax(kRoastSliderRows * 26, hBody - 72));
-        const int rowH = juce::jmin(kRoastRowH, juce::jmax(22, gridHUse / kRoastSliderRows));
+        const int rowH = juce::jmin(kRoastRowH, juce::jmax(20, gridHUse / kRoastSliderRows));
         auto gridBand = b.removeFromTop(gridHUse);
         constexpr int kRoastMidGutter = 8;
         const int inner = juce::jmax(1, gridBand.getWidth() - kRoastMidGutter);
@@ -3276,6 +3276,37 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             styleShaperReadout(s, kShChebyHW);
         for (auto& s : chebyHPow)
             styleShaperReadout(s, kShChebyHW);
+
+        // Convert all shaper-tab sliders to LinearVertical (textbox below).
+        juce::Slider* vertSliders[] = {
+            &shaperMix, &shaperPreGain, &shaperPostTrim,
+            &magDrive, &magTilt, &magBias, &magTiltLimit, &magFeedback, &magOut,
+            &magEnergy, &magEnergyMs,
+            &chebyHarmMacro, &chebyPolyPow,
+            &chebyYL, &chebyYC, &chebyYR
+        };
+        for (auto* s : vertSliders)
+        {
+            s->setSliderStyle(juce::Slider::LinearVertical);
+            s->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+            s->setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
+            s->setColour(juce::Slider::trackColourId, kAccentGreen.withAlpha(0.9f));
+            s->setColour(juce::Slider::thumbColourId, kAccentBlue);
+        }
+        for (auto& s : chebyH)
+        {
+            s.setSliderStyle(juce::Slider::LinearVertical);
+            s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+            s.setColour(juce::Slider::trackColourId, kAccentGreen.withAlpha(0.9f));
+            s.setColour(juce::Slider::thumbColourId, kAccentBlue);
+        }
+        for (auto& s : chebyHPow)
+        {
+            s.setSliderStyle(juce::Slider::LinearVertical);
+            s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+            s.setColour(juce::Slider::trackColourId, kAccentBlue.withAlpha(0.9f));
+            s.setColour(juce::Slider::thumbColourId, kAccentGreen);
+        }
     }
 
     int getMinimumContentHeight() const noexcept
@@ -3335,55 +3366,66 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         for (auto& s : chebyHPow) s.setVisible(chebyOn && detailOn);
         for (auto& l : chebyHPowL) l.setVisible(chebyOn && detailOn);
 
-        constexpr int kRowH = 32;
-        const int paramNeed = kParamRows * kRowH + 2 * 24;
-        int bodyH = juce::jmax(1, b.getHeight());
-        if (bodyH > paramNeed)
-            b.removeFromBottom(bodyH - paramNeed);
-        bodyH = juce::jmax(1, b.getHeight());
-        const int rowH = juce::jmin(kRowH, juce::jmax(20, bodyH / juce::jmax(1, kParamRows)));
-        const int labelColW = juce::jlimit(120, 188, b.getWidth() / 3);
+        juce::ignoreUnused(kParamRows);
 
-        placeWideSliderRow(b, shaperMixL, shaperMix, rowH, labelColW);
-        placeWideSliderRow(b, shaperPreGainL, shaperPreGain, rowH, labelColW);
-        placeWideSliderRow(b, shaperPostTrimL, shaperPostTrim, rowH, labelColW);
+        constexpr int kColW = 72;
+        constexpr int kColH = 110;
+        constexpr int kColGap = 4;
+
+        auto placeVertRow = [&](std::initializer_list<std::pair<juce::Label*, juce::Slider*>> cols)
+        {
+            auto row = b.removeFromTop(kColH);
+            for (auto& [lab, sl] : cols)
+                placeVertCol(row, *lab, *sl, kColW);
+        };
+
+        // Shared shaper IO (always visible).
+        placeVertRow({ {&shaperMixL, &shaperMix}, {&shaperPreGainL, &shaperPreGain}, {&shaperPostTrimL, &shaperPostTrim} });
+        b.removeFromTop(6);
 
         if (magOn)
         {
-            auto mh = b.removeFromTop(22);
+            auto mh = b.removeFromTop(20);
             magnetHead.setBounds(mh.getX(), mh.getY(), 260, 18);
-            placeWideSliderRow(b, magDriveL, magDrive, rowH, labelColW);
-            placeWideSliderRow(b, magTiltL, magTilt, rowH, labelColW);
-            placeWideSliderRow(b, magBiasL, magBias, rowH, labelColW);
-            placeWideSliderRow(b, magTiltLimitL, magTiltLimit, rowH, labelColW);
-            placeWideSliderRow(b, magFeedbackL, magFeedback, rowH, labelColW);
-            placeWideSliderRow(b, magOutL, magOut, rowH, labelColW);
-            {
-                auto shapeRow = b.removeFromTop(rowH);
-                magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, labelColW, rowH - 8);
-                magShape.setBounds(shapeRow.getX() + labelColW + 4, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - labelColW - 8), rowH - 4);
-            }
-            placeWideSliderRow(b, magEnergyL, magEnergy, rowH, labelColW);
-            placeWideSliderRow(b, magEnergyMsL, magEnergyMs, rowH, labelColW);
+            // 8 vertical sliders + Sat type combo.
+            placeVertRow({ {&magDriveL,&magDrive}, {&magTiltL,&magTilt}, {&magBiasL,&magBias}, {&magTiltLimitL,&magTiltLimit},
+                           {&magFeedbackL,&magFeedback}, {&magOutL,&magOut}, {&magEnergyL,&magEnergy}, {&magEnergyMsL,&magEnergyMs} });
+            b.removeFromTop(6);
+            auto shapeRow = b.removeFromTop(28);
+            magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, 80, 20);
+            magShape.setBounds(shapeRow.getX() + 84, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - 84), 24);
+            b.removeFromTop(4);
         }
 
         if (chebyOn)
         {
-            auto ch = b.removeFromTop(22);
+            auto ch = b.removeFromTop(20);
             chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
-            placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
-            placeWideSliderRow(b, chebyPolyPowL, chebyPolyPow, rowH, labelColW);
+            placeVertRow({ {&chebyHarmMacroL,&chebyHarmMacro}, {&chebyPolyPowL,&chebyPolyPow},
+                           {&chebyYLL,&chebyYL}, {&chebyYCL,&chebyYC}, {&chebyYRL,&chebyYR} });
+            b.removeFromTop(6);
             auto detRow = b.removeFromTop(28);
             chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
-            placeWideSliderRow(b, chebyYLL, chebyYL, rowH, labelColW);
-            placeWideSliderRow(b, chebyYCL, chebyYC, rowH, labelColW);
-            placeWideSliderRow(b, chebyYRL, chebyYR, rowH, labelColW);
+            b.removeFromTop(4);
             if (detailOn)
-                for (int i = 0; i < 12; ++i)
+            {
+                // 12 H sliders in two rows of 6, then 12 Pow sliders in two rows of 6.
+                for (int rowStart = 0; rowStart < 12; rowStart += 6)
                 {
-                    placeWideSliderRow(b, chebyHL[(size_t) i], chebyH[(size_t) i], rowH, labelColW);
-                    placeWideSliderRow(b, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], rowH, labelColW);
+                    auto row = b.removeFromTop(kColH);
+                    for (int i = 0; i < 6 && (rowStart + i) < 12; ++i)
+                        placeVertCol(row, chebyHL[(size_t) (rowStart + i)], chebyH[(size_t) (rowStart + i)], kColW);
+                    b.removeFromTop(2);
                 }
+                for (int rowStart = 0; rowStart < 12; rowStart += 6)
+                {
+                    auto row = b.removeFromTop(kColH);
+                    for (int i = 0; i < 6 && (rowStart + i) < 12; ++i)
+                        placeVertCol(row, chebyHPowL[(size_t) (rowStart + i)], chebyHPow[(size_t) (rowStart + i)], kColW);
+                    b.removeFromTop(2);
+                }
+                juce::ignoreUnused(kColGap);
+            }
         }
     }
 };
@@ -3525,7 +3567,7 @@ void ParaEQ301AudioProcessorEditor::resized()
     constexpr int kGapLabelBar = 4;
     constexpr int kTopStripH = 30;
     constexpr int kMixColOuterW = 128;
-    constexpr int kCurveMaxH = 320;
+    constexpr int kCurveMaxH = 240;
     constexpr int kTabMinRemainH = 260;
 
     auto belowTabsTop = getLocalBounds();
