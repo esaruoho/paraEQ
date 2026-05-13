@@ -746,6 +746,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
             0.0f,
             juce::AudioParameterFloatAttributes().withLabel("wt")));
 
+    static const char* chebyHarmPowIds[12] = {
+        "chebyH2Pow", "chebyH3Pow", "chebyH4Pow", "chebyH5Pow", "chebyH6Pow", "chebyH7Pow",
+        "chebyH8Pow", "chebyH9Pow", "chebyH10Pow", "chebyH11Pow", "chebyH12Pow", "chebyH13Pow"
+    };
+    for (int i = 0; i < 12; ++i)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            chebyHarmPowIds[i], juce::String("Cheby H") + juce::String(i + 2) + " pow",
+            juce::NormalisableRange<float>(0.25f, 4.0f, 0.001f, 0.5f, true),
+            1.0f,
+            juce::AudioParameterFloatAttributes().withLabel("k")));
+
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "lfoStereoPhase", "LFO L/R phase",
         juce::NormalisableRange<float>(0.0f, 180.0f, 1.0f),
@@ -1563,6 +1574,13 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float chebyYR = apvts.getRawParameterValue("chebyYR")->load();
     const float chebyHarmMacro = apvts.getRawParameterValue("chebyHarmMacro")->load();
     const float chebyPolyPow = apvts.getRawParameterValue("chebyPolyPow")->load();
+    static const char* kChebyHarmPowPid[12] = {
+        "chebyH2Pow", "chebyH3Pow", "chebyH4Pow", "chebyH5Pow", "chebyH6Pow", "chebyH7Pow",
+        "chebyH8Pow", "chebyH9Pow", "chebyH10Pow", "chebyH11Pow", "chebyH12Pow", "chebyH13Pow"
+    };
+    float chebyPolyPow12[12];
+    for (int hi = 0; hi < 12; ++hi)
+        chebyPolyPow12[(size_t) hi] = apvts.getRawParameterValue(kChebyHarmPowPid[hi])->load();
     float harm12[12];
     static const char* kChebyHarmPid[12] = {
         "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
@@ -1576,7 +1594,12 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const int chebyMaxN = paketti::chebyMaxActiveN(harmScaled);
     const bool chebyHarmonicsOn = chebyMaxN > 1;
     const bool chebyCurveDc = paketti::chebyCurveHasDc(chebyYL, chebyYC, chebyYR);
-    const bool chebyPolyPowNonUnity = std::abs(chebyPolyPow - 1.f) > 1.0e-4f;
+    bool chebyPolyPowNonUnity = std::abs(chebyPolyPow - 1.f) > 1.0e-4f;
+    if (!chebyPolyPowNonUnity)
+    {
+        for (int hi = 0; hi < 12; ++hi)
+            if (std::abs(chebyPolyPow12[(size_t) hi] - 1.f) > 1.0e-4f) { chebyPolyPowNonUnity = true; break; }
+    }
     const bool chebyNeedsDcBlock = chebyCurveDc || chebyPolyPowNonUnity;
     const bool shaperEngaged = (!linearListen && shaperModeIdx > 0 && shaperMix > 1.0e-7f
                                  && ((shaperModeIdx == 1) || (shaperModeIdx == 2 && chebyHarmonicsOn)));
@@ -1584,8 +1607,8 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float* chebyLutRead = nullptr;
     if (shaperEngaged && shaperModeIdx == 2 && chebyLutBuilder != nullptr)
     {
-        const std::uint32_t nh = paketti::hashChebyParams(chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow);
-        chebyLutRead = chebyLutBuilder->resolveLut(nh, chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow, chebyLutSyncScratch);
+        const std::uint32_t nh = paketti::hashChebyParams(chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow, chebyPolyPow12);
+        chebyLutRead = chebyLutBuilder->resolveLut(nh, chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow, chebyPolyPow12, chebyLutSyncScratch);
     }
 
     for (int n = 0; n < numSamps; ++n)
@@ -2147,6 +2170,12 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         };
         for (const char* hid : zChebyH)
             apvtsSetFloatPlain(ap, hid, 0.f);
+        static const char* zChebyHPow[12] = {
+            "chebyH2Pow", "chebyH3Pow", "chebyH4Pow", "chebyH5Pow", "chebyH6Pow", "chebyH7Pow",
+            "chebyH8Pow", "chebyH9Pow", "chebyH10Pow", "chebyH11Pow", "chebyH12Pow", "chebyH13Pow"
+        };
+        for (const char* hid : zChebyHPow)
+            apvtsSetFloatPlain(ap, hid, 1.f);
         apvtsSetFloatPlain(ap, "thrill1Spec", kThrillSpecDefault);
         apvtsSetFloatPlain(ap, "thrill1ThreshDb", thrillThresholdDefaultDb());
         apvtsSetFloatPlain(ap, "thrill1Ratio", thrillRatioDefaultStored());

@@ -32,7 +32,7 @@ void ChebyLutBuilder::stopBuilder()
 }
 
 void ChebyLutBuilder::requestBuild(std::uint32_t hash, float yL, float yC, float yR, const float* harm12, float harmMacro01,
-                                   float polyPow)
+                                   float polyPowGlobal, const float* polyPow12)
 {
     if (harm12 == nullptr)
         return;
@@ -43,15 +43,20 @@ void ChebyLutBuilder::requestBuild(std::uint32_t hash, float yL, float yC, float
         pending.yC = yC;
         pending.yR = yR;
         pending.harmMacro01 = harmMacro01;
-        pending.polyPow = polyPow;
+        pending.polyPowGlobal = polyPowGlobal;
         std::memcpy(pending.harm12, harm12, sizeof(pending.harm12));
+        if (polyPow12 != nullptr)
+            std::memcpy(pending.polyPow12, polyPow12, sizeof(pending.polyPow12));
+        else
+            for (int i = 0; i < 12; ++i)
+                pending.polyPow12[i] = 1.f;
         pending.valid = true;
     }
     condition.notify_one();
 }
 
 const float* ChebyLutBuilder::resolveLut(std::uint32_t hash, float yL, float yC, float yR, const float* harm12, float harmMacro01,
-                                           float polyPow,
+                                           float polyPowGlobal, const float* polyPow12,
                                            std::array<float, paketti::kChebyLutPoints>& syncScratch)
 {
     if (harm12 == nullptr)
@@ -61,7 +66,7 @@ const float* ChebyLutBuilder::resolveLut(std::uint32_t hash, float yL, float yC,
     if (pub == hash)
         return buffers[(size_t) readBuffer.load(std::memory_order_acquire)].data();
 
-    requestBuild(hash, yL, yC, yR, harm12, harmMacro01, polyPow);
+    requestBuild(hash, yL, yC, yR, harm12, harmMacro01, polyPowGlobal, polyPow12);
 
     const std::uint32_t pub2 = publishedHash.load(std::memory_order_acquire);
     if (pub2 == hash)
@@ -70,7 +75,7 @@ const float* ChebyLutBuilder::resolveLut(std::uint32_t hash, float yL, float yC,
     float scaled[12];
     for (int i = 0; i < 12; ++i)
         scaled[(size_t) i] = harm12[(size_t) i] * harmMacro01;
-    paketti::rebuildChebyLut(yL, yC, yR, scaled, polyPow, syncScratch.data(), paketti::kChebyLutPoints);
+    paketti::rebuildChebyLut(yL, yC, yR, scaled, polyPowGlobal, polyPow12, syncScratch.data(), paketti::kChebyLutPoints);
     return syncScratch.data();
 }
 
@@ -101,7 +106,7 @@ void ChebyLutBuilder::run()
             scaled[(size_t) i] = job.harm12[(size_t) i] * job.harmMacro01;
 
         const int writeIx = 1 - readBuffer.load(std::memory_order_relaxed);
-        paketti::rebuildChebyLut(job.yL, job.yC, job.yR, scaled, job.polyPow, buffers[(size_t) writeIx].data(), paketti::kChebyLutPoints);
+        paketti::rebuildChebyLut(job.yL, job.yC, job.yR, scaled, job.polyPowGlobal, job.polyPow12, buffers[(size_t) writeIx].data(), paketti::kChebyLutPoints);
         readBuffer.store(writeIx, std::memory_order_release);
         publishedHash.store(job.hash, std::memory_order_release);
     }

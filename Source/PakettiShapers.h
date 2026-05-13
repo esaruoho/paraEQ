@@ -75,15 +75,26 @@ namespace paketti
     }
 
     /** Build normalized LUT: input in [-1,1] maps to nl(curve(x)) scaled to peak 0.99.
-        `polyPow` applies signed pow() to each Tn(x) before the weighted sum (Lassi's per-polynomial shaper).
-        polyPow == 1.0f is the original behavior. */
-    inline void rebuildChebyLut(float yL, float yC, float yR, const float* harm12, float polyPow,
+        `polyPowGlobal` is a macro exponent applied to every Tn. `polyPow12[i]` (i=0..11 for T_{i+2}) is per-polynomial.
+        Effective exponent for Tn = polyPowGlobal * polyPow12[n-2]. All-1.0f is the original behavior. */
+    inline void rebuildChebyLut(float yL, float yC, float yR, const float* harm12,
+                                float polyPowGlobal, const float* polyPow12,
                                 float* lut, int lutSize) noexcept
     {
         if (lut == nullptr || lutSize < 2)
             return;
         const int maxN = juce::jmax(1, chebyMaxActiveN(harm12));
-        const bool useClenshaw = std::abs(polyPow - 1.f) < 1.0e-6f;
+
+        float keff[kChebyHarmonics];
+        bool allUnity = std::abs(polyPowGlobal - 1.f) < 1.0e-6f;
+        for (int i = 0; i < kChebyHarmonics; ++i)
+        {
+            const float per = (polyPow12 != nullptr) ? polyPow12[(size_t) i] : 1.f;
+            keff[i] = polyPowGlobal * per;
+            if (std::abs(keff[i] - 1.f) > 1.0e-6f)
+                allUnity = false;
+        }
+        const bool useClenshaw = allUnity;
 
         float coeffs[14] {};
         if (useClenshaw)
@@ -119,7 +130,7 @@ namespace paketti
                     Tcurr = Tn;
                     const float w = harm12[(size_t) (k - 2)];
                     if (std::abs(w) > 1.0e-24f)
-                        y += w * signedPow(Tn, polyPow);
+                        y += w * signedPow(Tn, keff[(size_t) (k - 2)]);
                 }
             }
 
@@ -214,15 +225,19 @@ namespace paketti
     }
 
     inline uint32_t hashChebyParams(float yL, float yC, float yR, const float* h12, float harmMacro01,
-                                    float polyPow) noexcept
+                                    float polyPowGlobal, const float* polyPow12) noexcept
     {
         auto q = [](float v) -> uint32_t
         {
             return (uint32_t) juce::roundToInt(v * 10000.f);
         };
-        uint32_t h = q(yL) ^ (q(yC) << 1) ^ (q(yC) >> 3) ^ (q(yR) << 2) ^ (q(harmMacro01) << 5) ^ (q(polyPow) << 7);
+        uint32_t h = q(yL) ^ (q(yC) << 1) ^ (q(yC) >> 3) ^ (q(yR) << 2) ^ (q(harmMacro01) << 5) ^ (q(polyPowGlobal) << 7);
         for (int i = 0; i < kChebyHarmonics; ++i)
+        {
             h ^= q(h12[(size_t) i]) << (unsigned) (i % 17);
+            if (polyPow12 != nullptr)
+                h ^= q(polyPow12[(size_t) i]) << (unsigned) ((i + 7) % 19);
+        }
         return h;
     }
 } // namespace paketti

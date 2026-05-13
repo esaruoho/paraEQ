@@ -2998,6 +2998,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     juce::Label chebyYRL;
     std::array<juce::Slider, 12> chebyH {};
     std::array<juce::Label, 12> chebyHL {};
+    std::array<juce::Slider, 12> chebyHPow {};
+    std::array<juce::Label, 12> chebyHPowL {};
 
     static void placeWideSliderRow(juce::Rectangle<int>& area, juce::Label& cap, juce::Slider& sl, int rowH, int labelColW)
     {
@@ -3111,6 +3113,10 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
                 s.setVisible(on);
             for (auto& l : chebyHL)
                 l.setVisible(on);
+            for (auto& s : chebyHPow)
+                s.setVisible(on);
+            for (auto& l : chebyHPowL)
+                l.setVisible(on);
             resized();
             if (auto* vp = findParentComponentOfClass<juce::Viewport>())
                 vp->resized();
@@ -3118,6 +3124,10 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         for (auto& s : chebyH)
             s.setVisible(false);
         for (auto& l : chebyHL)
+            l.setVisible(false);
+        for (auto& s : chebyHPow)
+            s.setVisible(false);
+        for (auto& l : chebyHPowL)
             l.setVisible(false);
 
         auto wireChebyY = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
@@ -3151,6 +3161,22 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             chebyH[(size_t) i].valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         }
 
+        static const char* chebyPowIds[12] = {
+            "chebyH2Pow", "chebyH3Pow", "chebyH4Pow", "chebyH5Pow", "chebyH6Pow", "chebyH7Pow",
+            "chebyH8Pow", "chebyH9Pow", "chebyH10Pow", "chebyH11Pow", "chebyH12Pow", "chebyH13Pow"
+        };
+        for (int i = 0; i < 12; ++i)
+        {
+            styleLinearSliderCompact(chebyHPow[(size_t) i], kAccentBlue);
+            styleLabelDark(chebyHPowL[(size_t) i], juce::String("H") + juce::String(i + 2) + " pow", true);
+            addAndMakeVisible(chebyHPow[(size_t) i]);
+            addAndMakeVisible(chebyHPowL[(size_t) i]);
+            chebyHPow[(size_t) i].setTooltip("Per-polynomial signed pow() exponent for Tn(x) before the weighted sum. Final k = global Poly pow * this. 1.0 = identity.");
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, chebyPowIds[i], chebyHPow[(size_t) i]));
+            chebyHPow[(size_t) i].textFromValueFunction = [](double v) { return juce::String(v, 2); };
+            chebyHPow[(size_t) i].valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+        }
+
         constexpr int kShValH = 20;
         constexpr int kShPctW = 58;
         constexpr int kShGainW = 70;   // "10.00 x"
@@ -3177,6 +3203,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         styleShaperReadout(chebyYR, kShChebyYW);
         for (auto& s : chebyH)
             styleShaperReadout(s, kShChebyHW);
+        for (auto& s : chebyHPow)
+            styleShaperReadout(s, kShChebyHW);
     }
 
     int getMinimumContentHeight() const noexcept
@@ -3184,7 +3212,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         constexpr int kOuterPad = 16;
         constexpr int kIntroMax = 120;
         constexpr int kRowH = 32;
-        const int harmRows = chebyDetailToggle.getToggleState() ? 12 : 0;
+        const int harmRows = chebyDetailToggle.getToggleState() ? 24 : 0;
         constexpr int kBaseSliderRows = 3 + 6 + 1 + 2 + 3;
         const int kSliderRows = kBaseSliderRows + harmRows;
         constexpr int kSectionGap = 2 * 24;
@@ -3243,7 +3271,10 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         placeWideSliderRow(b, chebyYRL, chebyYR, rowH, labelColW);
         if (detailOn)
             for (int i = 0; i < 12; ++i)
+            {
                 placeWideSliderRow(b, chebyHL[(size_t) i], chebyH[(size_t) i], rowH, labelColW);
+                placeWideSliderRow(b, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], rowH, labelColW);
+            }
     }
 };
 

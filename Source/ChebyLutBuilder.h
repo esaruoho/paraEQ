@@ -20,11 +20,11 @@ public:
 
     /** Queue coalesced rebuild (latest params win). Safe from audio or message thread. */
     void requestBuild(std::uint32_t hash, float yL, float yC, float yR, const float* harm12, float harmMacro01,
-                      float polyPow);
+                      float polyPowGlobal, const float* polyPow12);
 
     /** Returns LUT for hash: published buffer if ready, else fills syncScratch on the caller thread. */
     const float* resolveLut(std::uint32_t hash, float yL, float yC, float yR, const float* harm12, float harmMacro01,
-                            float polyPow,
+                            float polyPowGlobal, const float* polyPow12,
                             std::array<float, paketti::kChebyLutPoints>& syncScratch);
 
 private:
@@ -38,7 +38,8 @@ private:
         float yR = 1.f;
         float harm12[12] {};
         float harmMacro01 = 1.f;
-        float polyPow = 1.f;
+        float polyPowGlobal = 1.f;
+        float polyPow12[12] { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f };
         bool valid = false;
     };
 
