@@ -2002,8 +2002,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             if (band.hasBw && band.hasCfInLeftColumn)
             {
                 placeKnobCol(band.cf, band.cfLabel, 0);
-                placeKnobCol(band.bw, band.bwLabel, 1);
-                placeKnobCol(band.gain, band.gainLabel, 2);
+                placeKnobCol(band.gain, band.gainLabel, 1);
+                placeKnobCol(band.bw, band.bwLabel, 2);
             }
             else
             {
