@@ -176,7 +176,7 @@ namespace
         static constexpr int coreBetweenRows = 1;
         static constexpr int thrillRowH = 28;
         static constexpr int coreToneRowH = 28;
-        static constexpr int gapBeforeBands = 2;
+        static constexpr int gapBeforeBands = 0;
         static constexpr int coreStripH() noexcept
         {
             return coreRowH + coreBetweenRows + thrillRowH + coreBetweenRows + coreRowH + coreBetweenRows + thrillRowH
@@ -184,7 +184,7 @@ namespace
         }
         static constexpr int bandRowsH() noexcept { return 4 * kEqRowHeight; }
         /** Motion overview strip moved to EQ tab (was inside LfoTabContent); stacked LFO body height without that strip. */
-        static constexpr int kEqMotionOverviewRowH() noexcept { return 6 + 16 + 2; }
+        static constexpr int kEqMotionOverviewRowH() noexcept { return 4; }
         static constexpr int kLfoMotionStackedBodyMinH() noexcept
         {
             return kLfoMotionPanelMinH() - kEqMotionOverviewRowH();
