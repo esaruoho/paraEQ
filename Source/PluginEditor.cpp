@@ -3556,7 +3556,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     setLookAndFeel(&pluginSliderValueLf);
 
-    setSize(900, 740);
+    setSize(900, 790);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
