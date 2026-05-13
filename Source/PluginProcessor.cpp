@@ -545,7 +545,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
 
     layout.add(std::make_unique<juce::AudioParameterBool>("linearEqListen", "Linear EQ only", false));
 
-    layout.add(std::make_unique<juce::AudioParameterBool>("eqPinkLevelBal", "EQ pink level balance", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>("eqPinkLevelBal", "EQ pink level balance", false));
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "oversample", "Oversampling",
