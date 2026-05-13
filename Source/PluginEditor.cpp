@@ -2495,12 +2495,11 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     int getMinimumContentHeight() const noexcept
     {
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
-        constexpr int kIntroCap = 96;
         constexpr int kRoastSliderRows = 9;
         constexpr int kRoastRowH = 32;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
-        return kChrome + kIntroCap + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
+        return kChrome + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
     }
 
     void resized() override
@@ -2736,12 +2735,11 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     int getMinimumContentHeight() const noexcept
     {
         constexpr int kOuterPad = 16;
-        constexpr int kIntroMax = 100;
-        constexpr int kAfterIntro = 6 + 26 + 6;
+        constexpr int kAfterIntro = 26 + 6;
         constexpr int kAnharmRowH = 32;
         constexpr int kParamRows = 8;
         constexpr int kRows = kParamRows * kAnharmRowH;
-        return kOuterPad + kIntroMax + kAfterIntro + kRows + 8;
+        return kOuterPad + kAfterIntro + kRows + 8;
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
@@ -2940,11 +2938,10 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
     int getMinimumContentHeight() const noexcept
     {
         constexpr int kOuterPad = 16;
-        constexpr int kIntroMax = 120;
-        constexpr int kAfterIntro = 6 + 26 + 6;
+        constexpr int kAfterIntro = 26 + 6;
         constexpr int kRowH = 32;
         constexpr int kParamRows = 7;
-        return kOuterPad + kIntroMax + kAfterIntro + kParamRows * kRowH + 10;
+        return kOuterPad + kAfterIntro + kParamRows * kRowH + 10;
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }

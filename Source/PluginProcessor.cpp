@@ -901,6 +901,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         const float spb = juce::jmax(1.f, (float) samplesPerBlock);
         bandSmoothBlockCoeff = 1.f - std::exp(-spb / juce::jmax(1.f, srF * 0.020f));
         bandSmooth.initialized = false;
+        shaperMixSmooth.initialized = false;
         roastPunchDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.009)));
         roastGlueDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.13)));
         roastDriveEnvCoeff = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.007)));
@@ -1610,9 +1611,22 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     int shaperModeIdx = 0;
     if (auto* sm = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("shaperMode")))
         shaperModeIdx = juce::jlimit(0, 2, sm->getIndex());
-    const float shaperMix = apvts.getRawParameterValue("shaperMix")->load();
-    const float shaperPreGain = apvts.getRawParameterValue("shaperPreGain")->load();
-    const float shaperPostTrim = apvts.getRawParameterValue("shaperPostTrim")->load();
+    const float tgtShaperMix = apvts.getRawParameterValue("shaperMix")->load();
+    const float tgtShaperPreGain = apvts.getRawParameterValue("shaperPreGain")->load();
+    const float tgtShaperPostTrim = apvts.getRawParameterValue("shaperPostTrim")->load();
+    if (!shaperMixSmooth.initialized)
+    {
+        shaperMixSmooth.mix = tgtShaperMix;
+        shaperMixSmooth.preGain = tgtShaperPreGain;
+        shaperMixSmooth.postTrim = tgtShaperPostTrim;
+        shaperMixSmooth.initialized = true;
+    }
+    shaperMixSmooth.mix      += (tgtShaperMix      - shaperMixSmooth.mix)      * bandSmoothBlockCoeff;
+    shaperMixSmooth.preGain  += (tgtShaperPreGain  - shaperMixSmooth.preGain)  * bandSmoothBlockCoeff;
+    shaperMixSmooth.postTrim += (tgtShaperPostTrim - shaperMixSmooth.postTrim) * bandSmoothBlockCoeff;
+    const float shaperMix = shaperMixSmooth.mix;
+    const float shaperPreGain = shaperMixSmooth.preGain;
+    const float shaperPostTrim = shaperMixSmooth.postTrim;
     const float magDrive = apvts.getRawParameterValue("magDrive")->load();
     const float magTilt = apvts.getRawParameterValue("magTilt")->load();
     const float magBias = apvts.getRawParameterValue("magBias")->load();

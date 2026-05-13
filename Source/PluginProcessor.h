@@ -137,6 +137,9 @@ private:
     } bandSmooth;
     float bandSmoothBlockCoeff = 0.f;
 
+    /** Per-block smoothing for shaper mix/preGain/postTrim to kill knob-move clicks. */
+    struct ShaperMixSmooth { float mix = 0.f; float preGain = 1.f; float postTrim = 1.f; bool initialized = false; } shaperMixSmooth;
+
     std::array<IIRFilter, 4> roastPreHighShelf;
     std::array<IIRFilter, 4> roastPostHighShelf;
 
