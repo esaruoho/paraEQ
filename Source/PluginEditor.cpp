@@ -216,11 +216,10 @@ namespace
         {
             return kLfoMotionPanelMinH() - kEqMotionOverviewRowH();
         }
-        /** EQ overview + max(EQ band stack, stacked Motion body when Motion is below bands). */
+        /** EQ overview + EQ band stack. (Stacked LFO panel reserves no extra space here — it shows when the window has room.) */
         static constexpr int bandMotionPairH() noexcept
         {
-            return kEqMotionOverviewRowH()
-                   + (bandRowsH() > kLfoMotionStackedBodyMinH() ? bandRowsH() : kLfoMotionStackedBodyMinH());
+            return kEqMotionOverviewRowH() + bandRowsH();
         }
         /** Everything below the graph except the graph itself. */
         static constexpr int chromeBelowGraph() noexcept
@@ -1266,12 +1265,13 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
         auto& ap = proc.getAPVTS();
         for (int r = 0; r < 4; ++r)
         {
-            if (!motionLfoPaintRect[(size_t) r].isEmpty() && motionLfoDepthActive(ap))
+            if (!motionLfoPaintRect[(size_t) r].isEmpty())
             {
-                const bool bandOn = eqBandHasMotion(ap, r);
-                g.setColour(kAccentBlue.withAlpha(0.09f));
+                const bool motionArmed = motionLfoDepthActive(ap);
+                const bool bandOn = motionArmed && eqBandHasMotion(ap, r);
+                g.setColour(kAccentBlue.withAlpha(motionArmed ? 0.09f : 0.05f));
                 g.fillRoundedRectangle(motionLfoPaintRect[(size_t) r].toFloat().reduced(1), 5.f);
-                g.setColour(kAccentBlue.withAlpha(bandOn ? 0.28f : 0.16f));
+                g.setColour(kAccentBlue.withAlpha(motionArmed ? (bandOn ? 0.28f : 0.16f) : 0.10f));
                 g.drawRoundedRectangle(motionLfoPaintRect[(size_t) r].toFloat().reduced(1), 5.f, 1.f);
             }
         }
@@ -1547,8 +1547,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         processor.getMotionEffectiveEqSnapshot(snap0);
         motionStatus.setText(buildEqMotionStatusShort(ap, snap0), juce::dontSendNotification);
         motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, snap0));
-        motionStatus.setVisible(false);
         addAndMakeVisible(motionStatus);
+        motionStatus.setVisible(false);  // accessible via (?) only; keep text updated for callout.
         motionInfoBtn.setButtonText("?");
         motionInfoBtn.setTooltip("Motion status / live LFO readout");
         motionInfoBtn.onClick = [this]
@@ -1867,14 +1867,14 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         auto& ap = proc.getAPVTS();
         for (int r = 0; r < 4; ++r)
         {
-            if (!motionRowRect[(size_t) r].isEmpty() && motionLfoDepthActive(ap))
+            if (!motionRowRect[(size_t) r].isEmpty())
             {
-                const bool bandOn = eqBandHasMotion(ap, r);
-                // Same fill for every row when Motion is armed so Lo/Hi shelves never read as "missing"
-                // the panel tint (weak-only alpha on kPanelBlack looked like plain black on the Low row).
-                g.setColour(kAccentBlue.withAlpha(0.09f));
+                const bool motionArmed = motionLfoDepthActive(ap);
+                const bool bandOn = motionArmed && eqBandHasMotion(ap, r);
+                // Always draw the band-row panel tint so the EQ tab reads as boxed rows by default.
+                g.setColour(kAccentBlue.withAlpha(motionArmed ? 0.09f : 0.05f));
                 g.fillRoundedRectangle(motionRowRect[(size_t) r].toFloat().reduced(1), 5.f);
-                g.setColour(kAccentBlue.withAlpha(bandOn ? 0.28f : 0.16f));
+                g.setColour(kAccentBlue.withAlpha(motionArmed ? (bandOn ? 0.28f : 0.16f) : 0.10f));
                 g.drawRoundedRectangle(motionRowRect[(size_t) r].toFloat().reduced(1), 5.f, 1.f);
             }
         }
@@ -2650,7 +2650,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         addAndMakeVisible(anharmOnToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "anharmBankEnable", anharmOnToggle));
 
-        constexpr int kAnharmValueBoxW = 78;
+        constexpr int kAnharmValueBoxW = 92;
         constexpr int kAnharmValueBoxH = 20;
         auto styleAnharmValueBox = [&](juce::Slider& s)
         {
@@ -2715,7 +2715,9 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         styleAnharmValueBox(anharmPartials);
 
         wirePct(anharmMix, anharmMixL, "anharmMix", "Bank mix %", "Wet amount of parallel inharmonic peak sum (after SVF, before Core 2).");
+        styleAnharmValueBox(anharmMix);
         wireDb(anharmPerDb, anharmPerDbL, "anharmPerPartialDb", "1st partial dB", "Gain of partial n=1; higher partials roll off ~2.2 dB each.");
+        styleAnharmValueBox(anharmPerDb);
         styleLinearSliderCompact(anharmQ, kAccentBlue);
         styleLabelDark(anharmQL, "Bank Q", true);
         addAndMakeVisible(anharmQ);
@@ -2726,7 +2728,9 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         styleAnharmValueBox(anharmQ);
 
         wirePct(anharmNl, anharmNlL, "anharmNl", "Wet sat %", "tanh on the summed bank injection - amplitude-dependent narrowing of large resonant adds.");
+        styleAnharmValueBox(anharmNl);
         wirePct(anharmEnvQ, anharmEnvQL, "anharmEnvQ", "Env->Q %", "Follower on |x| lowers effective Q when the band is driven (anharmonic resonance curve).");
+        styleAnharmValueBox(anharmEnvQ);
     }
 
     int getMinimumContentHeight() const noexcept
