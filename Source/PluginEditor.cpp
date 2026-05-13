@@ -3039,6 +3039,12 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         if (auto* pc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("shaperMode")))
             shaperModeBox.addItemList(pc->choices, 1);
         comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "shaperMode", shaperModeBox));
+        shaperModeBox.onChange = [this]
+        {
+            resized();
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                vp->resized();
+        };
 
         auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
         {
@@ -3264,9 +3270,40 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         shaperModeL.setBounds(modeRow.removeFromLeft(100));
         shaperModeBox.setBounds(modeRow.removeFromLeft(juce::jmin(280, modeRow.getWidth())));
         b.removeFromTop(6);
-        const bool detailOn = chebyDetailToggle.getToggleState();
-        const int harmRows = detailOn ? 12 : 0;
-        const int kParamRows = 3 + 6 + 1 + 1 + 3 + harmRows;
+
+        const int modeIdx = shaperModeBox.getSelectedItemIndex(); // 0=Off, 1=Magnet, 2=Chebyshev
+        const bool magOn = (modeIdx == 1);
+        const bool chebyOn = (modeIdx == 2);
+        const bool detailOn = chebyOn || chebyDetailToggle.getToggleState();
+        const int harmRows = (chebyOn && detailOn) ? 24 : 0;
+        const int magRows = magOn ? 9 : 0;
+        const int magHeadRows = magOn ? 1 : 0;
+        const int chebyHeadRows = chebyOn ? 1 : 0;
+        const int chebyCurveRows = chebyOn ? (2 + 1 + 3) : 0;
+        const int kParamRows = 3 + magRows + magHeadRows + chebyHeadRows + chebyCurveRows + harmRows;
+
+        magnetHead.setVisible(magOn);
+        juce::Component* magBits[] = {
+            &magDrive, &magDriveL, &magTilt, &magTiltL, &magBias, &magBiasL,
+            &magTiltLimit, &magTiltLimitL, &magFeedback, &magFeedbackL,
+            &magOut, &magOutL, &magShape, &magShapeL, &magEnergy, &magEnergyL,
+            &magEnergyMs, &magEnergyMsL
+        };
+        for (auto* c : magBits)
+            c->setVisible(magOn);
+
+        chebyHead.setVisible(chebyOn);
+        chebyHarmMacro.setVisible(chebyOn); chebyHarmMacroL.setVisible(chebyOn);
+        chebyPolyPow.setVisible(chebyOn);   chebyPolyPowL.setVisible(chebyOn);
+        chebyDetailToggle.setVisible(chebyOn);
+        chebyYL.setVisible(chebyOn); chebyYLL.setVisible(chebyOn);
+        chebyYC.setVisible(chebyOn); chebyYCL.setVisible(chebyOn);
+        chebyYR.setVisible(chebyOn); chebyYRL.setVisible(chebyOn);
+        for (auto& s : chebyH)    s.setVisible(chebyOn && detailOn);
+        for (auto& l : chebyHL)   l.setVisible(chebyOn && detailOn);
+        for (auto& s : chebyHPow) s.setVisible(chebyOn && detailOn);
+        for (auto& l : chebyHPowL) l.setVisible(chebyOn && detailOn);
+
         constexpr int kRowH = 32;
         const int paramNeed = kParamRows * kRowH + 2 * 24;
         int bodyH = juce::jmax(1, b.getHeight());
@@ -3279,36 +3316,44 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         placeWideSliderRow(b, shaperMixL, shaperMix, rowH, labelColW);
         placeWideSliderRow(b, shaperPreGainL, shaperPreGain, rowH, labelColW);
         placeWideSliderRow(b, shaperPostTrimL, shaperPostTrim, rowH, labelColW);
-        auto mh = b.removeFromTop(22);
-        magnetHead.setBounds(mh.getX(), mh.getY(), 260, 18);
-        placeWideSliderRow(b, magDriveL, magDrive, rowH, labelColW);
-        placeWideSliderRow(b, magTiltL, magTilt, rowH, labelColW);
-        placeWideSliderRow(b, magBiasL, magBias, rowH, labelColW);
-        placeWideSliderRow(b, magTiltLimitL, magTiltLimit, rowH, labelColW);
-        placeWideSliderRow(b, magFeedbackL, magFeedback, rowH, labelColW);
-        placeWideSliderRow(b, magOutL, magOut, rowH, labelColW);
+
+        if (magOn)
         {
-            auto shapeRow = b.removeFromTop(rowH);
-            magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, labelColW, rowH - 8);
-            magShape.setBounds(shapeRow.getX() + labelColW + 4, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - labelColW - 8), rowH - 4);
-        }
-        placeWideSliderRow(b, magEnergyL, magEnergy, rowH, labelColW);
-        placeWideSliderRow(b, magEnergyMsL, magEnergyMs, rowH, labelColW);
-        auto ch = b.removeFromTop(22);
-        chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
-        placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
-        placeWideSliderRow(b, chebyPolyPowL, chebyPolyPow, rowH, labelColW);
-        auto detRow = b.removeFromTop(28);
-        chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
-        placeWideSliderRow(b, chebyYLL, chebyYL, rowH, labelColW);
-        placeWideSliderRow(b, chebyYCL, chebyYC, rowH, labelColW);
-        placeWideSliderRow(b, chebyYRL, chebyYR, rowH, labelColW);
-        if (detailOn)
-            for (int i = 0; i < 12; ++i)
+            auto mh = b.removeFromTop(22);
+            magnetHead.setBounds(mh.getX(), mh.getY(), 260, 18);
+            placeWideSliderRow(b, magDriveL, magDrive, rowH, labelColW);
+            placeWideSliderRow(b, magTiltL, magTilt, rowH, labelColW);
+            placeWideSliderRow(b, magBiasL, magBias, rowH, labelColW);
+            placeWideSliderRow(b, magTiltLimitL, magTiltLimit, rowH, labelColW);
+            placeWideSliderRow(b, magFeedbackL, magFeedback, rowH, labelColW);
+            placeWideSliderRow(b, magOutL, magOut, rowH, labelColW);
             {
-                placeWideSliderRow(b, chebyHL[(size_t) i], chebyH[(size_t) i], rowH, labelColW);
-                placeWideSliderRow(b, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], rowH, labelColW);
+                auto shapeRow = b.removeFromTop(rowH);
+                magShapeL.setBounds(shapeRow.getX(), shapeRow.getY() + 4, labelColW, rowH - 8);
+                magShape.setBounds(shapeRow.getX() + labelColW + 4, shapeRow.getY() + 2, juce::jmin(180, shapeRow.getWidth() - labelColW - 8), rowH - 4);
             }
+            placeWideSliderRow(b, magEnergyL, magEnergy, rowH, labelColW);
+            placeWideSliderRow(b, magEnergyMsL, magEnergyMs, rowH, labelColW);
+        }
+
+        if (chebyOn)
+        {
+            auto ch = b.removeFromTop(22);
+            chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
+            placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
+            placeWideSliderRow(b, chebyPolyPowL, chebyPolyPow, rowH, labelColW);
+            auto detRow = b.removeFromTop(28);
+            chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
+            placeWideSliderRow(b, chebyYLL, chebyYL, rowH, labelColW);
+            placeWideSliderRow(b, chebyYCL, chebyYC, rowH, labelColW);
+            placeWideSliderRow(b, chebyYRL, chebyYR, rowH, labelColW);
+            if (detailOn)
+                for (int i = 0; i < 12; ++i)
+                {
+                    placeWideSliderRow(b, chebyHL[(size_t) i], chebyH[(size_t) i], rowH, labelColW);
+                    placeWideSliderRow(b, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], rowH, labelColW);
+                }
+        }
     }
 };
 
