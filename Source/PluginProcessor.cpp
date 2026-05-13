@@ -897,6 +897,10 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         const float srF = static_cast<float>(currentSampleRate);
         constexpr float dcCornerHz = 14.0f;
         coreDcLeakCoeff = 1.0f - std::exp(-kTwoPi * dcCornerHz / juce::jmax(100.f, srF));
+        // Per-block one-pole for band-param smoothing (~20 ms time constant).
+        const float spb = juce::jmax(1.f, (float) samplesPerBlock);
+        bandSmoothBlockCoeff = 1.f - std::exp(-spb / juce::jmax(1.f, srF * 0.020f));
+        bandSmooth.initialized = false;
         roastPunchDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.009)));
         roastGlueDecay = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.13)));
         roastDriveEnvCoeff = static_cast<float>(std::exp(-1.0 / juce::jmax(10.0, currentSampleRate * 0.007)));
@@ -1529,16 +1533,47 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float rM2 = hzM2 / static_cast<float>(sr);
     const float rLo = hzLo / static_cast<float>(sr);
 
-    const float baseHiCf = apvts.getRawParameterValue("hiCf")->load();
-    const float baseHiG = apvts.getRawParameterValue("hiGain")->load();
-    const float baseM1f = apvts.getRawParameterValue("mid1Cf")->load();
-    const float baseM1bw = apvts.getRawParameterValue("mid1Bw")->load();
-    const float baseM1g = apvts.getRawParameterValue("mid1Gain")->load();
-    const float baseM2f = apvts.getRawParameterValue("mid2Cf")->load();
-    const float baseM2bw = apvts.getRawParameterValue("mid2Bw")->load();
-    const float baseM2g = apvts.getRawParameterValue("mid2Gain")->load();
-    const float baseLoCf = apvts.getRawParameterValue("lowCf")->load();
-    const float baseLoG = apvts.getRawParameterValue("lowGain")->load();
+    const float tgtHiCf = apvts.getRawParameterValue("hiCf")->load();
+    const float tgtHiG = apvts.getRawParameterValue("hiGain")->load();
+    const float tgtM1f = apvts.getRawParameterValue("mid1Cf")->load();
+    const float tgtM1bw = apvts.getRawParameterValue("mid1Bw")->load();
+    const float tgtM1g = apvts.getRawParameterValue("mid1Gain")->load();
+    const float tgtM2f = apvts.getRawParameterValue("mid2Cf")->load();
+    const float tgtM2bw = apvts.getRawParameterValue("mid2Bw")->load();
+    const float tgtM2g = apvts.getRawParameterValue("mid2Gain")->load();
+    const float tgtLoCf = apvts.getRawParameterValue("lowCf")->load();
+    const float tgtLoG = apvts.getRawParameterValue("lowGain")->load();
+
+    if (!bandSmooth.initialized)
+    {
+        bandSmooth.hiCf = tgtHiCf; bandSmooth.hiG = tgtHiG;
+        bandSmooth.m1f = tgtM1f; bandSmooth.m1bw = tgtM1bw; bandSmooth.m1g = tgtM1g;
+        bandSmooth.m2f = tgtM2f; bandSmooth.m2bw = tgtM2bw; bandSmooth.m2g = tgtM2g;
+        bandSmooth.lowCf = tgtLoCf; bandSmooth.lowG = tgtLoG;
+        bandSmooth.initialized = true;
+    }
+    const float bsc = bandSmoothBlockCoeff;
+    bandSmooth.hiCf += (tgtHiCf - bandSmooth.hiCf) * bsc;
+    bandSmooth.hiG  += (tgtHiG  - bandSmooth.hiG)  * bsc;
+    bandSmooth.m1f  += (tgtM1f  - bandSmooth.m1f)  * bsc;
+    bandSmooth.m1bw += (tgtM1bw - bandSmooth.m1bw) * bsc;
+    bandSmooth.m1g  += (tgtM1g  - bandSmooth.m1g)  * bsc;
+    bandSmooth.m2f  += (tgtM2f  - bandSmooth.m2f)  * bsc;
+    bandSmooth.m2bw += (tgtM2bw - bandSmooth.m2bw) * bsc;
+    bandSmooth.m2g  += (tgtM2g  - bandSmooth.m2g)  * bsc;
+    bandSmooth.lowCf += (tgtLoCf - bandSmooth.lowCf) * bsc;
+    bandSmooth.lowG  += (tgtLoG  - bandSmooth.lowG)  * bsc;
+
+    const float baseHiCf = bandSmooth.hiCf;
+    const float baseHiG  = bandSmooth.hiG;
+    const float baseM1f  = bandSmooth.m1f;
+    const float baseM1bw = bandSmooth.m1bw;
+    const float baseM1g  = bandSmooth.m1g;
+    const float baseM2f  = bandSmooth.m2f;
+    const float baseM2bw = bandSmooth.m2bw;
+    const float baseM2g  = bandSmooth.m2g;
+    const float baseLoCf = bandSmooth.lowCf;
+    const float baseLoG  = bandSmooth.lowG;
 
     if (!anyLfo)
         updateFiltersUniform(sr);

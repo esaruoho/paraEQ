@@ -126,6 +126,17 @@ private:
     std::array<IIRFilter, 4> mid2PeakPerChannel;
     std::array<IIRFilter, 4> highShelfPerChannel;
 
+    /** Per-block-smoothed band targets (one-pole, ~20 ms time constant). Prevents zipper noise on coefficient updates. */
+    struct BandParamSmooth
+    {
+        float hiCf = 5000.f, hiG = 0.f;
+        float m1f = 1000.f, m1bw = 400.f, m1g = 0.f;
+        float m2f = 2500.f, m2bw = 400.f, m2g = 0.f;
+        float lowCf = 120.f, lowG = 0.f;
+        bool initialized = false;
+    } bandSmooth;
+    float bandSmoothBlockCoeff = 0.f;
+
     std::array<IIRFilter, 4> roastPreHighShelf;
     std::array<IIRFilter, 4> roastPostHighShelf;
 
