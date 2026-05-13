@@ -57,11 +57,11 @@ namespace
         source.setVisible(false);
     }
 
-    constexpr int kKnobSize = 52;
+    constexpr int kKnobSize = 40;
     // Rotary + TextBoxBelow must live inside setBounds height; captions go below getBottom().
     constexpr int kTextBoxH = 18;
     constexpr int kSliderColumnH = kKnobSize + kTextBoxH;
-    constexpr int kCaptionH = 15;
+    constexpr int kCaptionH = 12;
     constexpr int kGapCaption = 4;
     constexpr int kRowHeight = kSliderColumnH + kGapCaption + kCaptionH;
 
@@ -3556,7 +3556,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     setLookAndFeel(&pluginSliderValueLf);
 
-    setSize(900, 900);
+    setSize(900, 740);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
