@@ -104,10 +104,10 @@ namespace
 
     void styleTopBarMixKnob(juce::Slider& s)
     {
-        s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
-        s.setColour(juce::Slider::rotarySliderFillColourId, kAccentGreen);
-        s.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff444444));
+        s.setSliderStyle(juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+        s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
+        s.setColour(juce::Slider::trackColourId, kAccentGreen.withAlpha(0.9f));
         s.setColour(juce::Slider::thumbColourId, kAccentBlue);
         s.setColour(juce::Slider::textBoxTextColourId, kTextBright);
         s.setColour(juce::Slider::textBoxBackgroundColourId, kTextBoxBg);
@@ -1182,8 +1182,8 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
         {
             // EQ tab: one horizontal strip per band - no outer margin here so LFO sits flush after EQ knobs.
             auto b = getLocalBounds();
-            Row* rows[4] = { &hi, &m1, &m2, &lo };
-            juce::Rectangle<int>* dots[4] = { &lfoDotHi, &lfoDotM1, &lfoDotM2, &lfoDotLo };
+            Row* rows[4] = { &lo, &m1, &m2, &hi };
+            juce::Rectangle<int>* dots[4] = { &lfoDotLo, &lfoDotM1, &lfoDotM2, &lfoDotHi };
             for (int i = 0; i < 4; ++i)
             {
                 auto rowR = b.removeFromTop(kEqRowHeight);
@@ -1213,13 +1213,13 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
         auto rightPanel = motionBody;
 
         motionLfoPaintRect[0] = bandsRect.withHeight(kRowHeight);
-        placeRow(hi, bandsRect.removeFromTop(kRowHeight), lfoDotHi);
+        placeRow(lo, bandsRect.removeFromTop(kRowHeight), lfoDotLo);
         motionLfoPaintRect[1] = bandsRect.withHeight(kRowHeight);
         placeRow(m1, bandsRect.removeFromTop(kRowHeight), lfoDotM1);
         motionLfoPaintRect[2] = bandsRect.withHeight(kRowHeight);
         placeRow(m2, bandsRect.removeFromTop(kRowHeight), lfoDotM2);
         motionLfoPaintRect[3] = bandsRect.withHeight(kRowHeight);
-        placeRow(lo, bandsRect.removeFromTop(kRowHeight), lfoDotLo);
+        placeRow(hi, bandsRect.removeFromTop(kRowHeight), lfoDotHi);
 
         constexpr int stereoLabW = 112;
         const int bodyY = rightPanel.getY();
@@ -2017,10 +2017,10 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             motionRowRect[(size_t) rowIndex] = { bandBounds.getX(), y, tintRight - bandBounds.getX() + 2, kEqRowHeight };
         };
 
-        placeRow(hi, 0);
+        placeRow(low, 0);
         placeRow(mid1, 1);
         placeRow(mid2, 2);
-        placeRow(low, 3);
+        placeRow(hi, 3);
 
         if (!mergedBandPlusLfo)
         {
@@ -3337,6 +3337,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     addAndMakeVisible(masterDryWetSlider);
     addAndMakeVisible(masterDryWetCaption);
     attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "masterDryWet", masterDryWetSlider));
+    masterDryWetSlider.updateText();
 
     startTimerHz(20);
 
@@ -3394,8 +3395,8 @@ void ParaEQ301AudioProcessorEditor::resized()
     meterOutBarBounds = { outBarX, kMeterTop + 1, outBarW, kBarH };
 
     {
-        const int knobH = kTopStripH - 12;
-        masterDryWetSlider.setBounds(mixCol.getX() + 2, 3, juce::jmax(72, mixCol.getWidth() - 4), knobH);
+        const int sliderH = 20;
+        masterDryWetSlider.setBounds(mixCol.getX() + 2, 2, juce::jmax(72, mixCol.getWidth() - 4), sliderH);
         masterDryWetCaption.setBounds(mixCol.getX() + 2, kTopStripH - 10, mixCol.getWidth() - 4, 9);
     }
 
