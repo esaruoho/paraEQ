@@ -2897,9 +2897,9 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         wirePct(aprDrive, aprDriveL, "aprDrive", "Drive %", "Nonlinear bandpass loop drive (amplitude-dependent resonance limiting).");
 
         constexpr int kAprValH = 20;
-        constexpr int kAprHzBoxW = 92;   // e.g. "8000 Hz"
-        constexpr int kAprPctBoxW = 58;  // "100 %"
-        constexpr int kAprQBoxW = 66;  // "40.00" at high Q
+        constexpr int kAprHzBoxW = 92;
+        constexpr int kAprPctBoxW = 92;
+        constexpr int kAprQBoxW = 92;
         auto styleAprReadout = [&](juce::Slider& s, int boxW)
         {
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kAprValH);
