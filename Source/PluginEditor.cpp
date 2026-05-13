@@ -2987,6 +2987,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     juce::Label chebyHead;
     juce::Slider chebyHarmMacro;
     juce::Label chebyHarmMacroL;
+    juce::Slider chebyPolyPow;
+    juce::Label chebyPolyPowL;
     juce::ToggleButton chebyDetailToggle { "Show H2-H13 detail sliders" };
     juce::Slider chebyYL;
     juce::Label chebyYLL;
@@ -3089,6 +3091,15 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
 
         wirePct(chebyHarmMacro, chebyHarmMacroL, "chebyHarmMacro", "Harmonics %",
                  "Scales every H2-H13 weight together (shape from detail sliders, overall amount from here).");
+        styleLinearSliderCompact(chebyPolyPow, kAccentGreen);
+        styleLabelDark(chebyPolyPowL, "Poly pow", true);
+        addAndMakeVisible(chebyPolyPow);
+        addAndMakeVisible(chebyPolyPowL);
+        chebyPolyPow.setTooltip("Per-polynomial signed pow() shaper applied to each Tn(x) before the weighted sum (Lassi's original tuning). "
+                                "1.0 = identity. < 1.0 = compress harmonic curves. > 1.0 = expand. DC blocker engages automatically when != 1.0.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "chebyPolyPow", chebyPolyPow));
+        chebyPolyPow.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+        chebyPolyPow.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         styleToggleDark(chebyDetailToggle);
         chebyDetailToggle.setTooltip("Reveal per-partial sliders. When off, use Harmonics % and the Bezier curve only.");
         addAndMakeVisible(chebyDetailToggle);
@@ -3160,6 +3171,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         styleShaperReadout(magFeedback, kShPctW);
         styleShaperReadout(magOut, kShMagW);
         styleShaperReadout(chebyHarmMacro, kShPctW);
+        styleShaperReadout(chebyPolyPow, kShPctW);
         styleShaperReadout(chebyYL, kShChebyYW);
         styleShaperReadout(chebyYC, kShChebyYW);
         styleShaperReadout(chebyYR, kShChebyYW);
@@ -3173,7 +3185,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         constexpr int kIntroMax = 120;
         constexpr int kRowH = 32;
         const int harmRows = chebyDetailToggle.getToggleState() ? 12 : 0;
-        constexpr int kBaseSliderRows = 3 + 6 + 1 + 1 + 3;
+        constexpr int kBaseSliderRows = 3 + 6 + 1 + 2 + 3;
         const int kSliderRows = kBaseSliderRows + harmRows;
         constexpr int kSectionGap = 2 * 24;
         return kOuterPad + kIntroMax + 8 + 26 + 6 + kSliderRows * kRowH + kSectionGap + 32;
@@ -3223,6 +3235,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         auto ch = b.removeFromTop(22);
         chebyHead.setBounds(ch.getX(), ch.getY(), 320, 18);
         placeWideSliderRow(b, chebyHarmMacroL, chebyHarmMacro, rowH, labelColW);
+        placeWideSliderRow(b, chebyPolyPowL, chebyPolyPow, rowH, labelColW);
         auto detRow = b.removeFromTop(28);
         chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
         placeWideSliderRow(b, chebyYLL, chebyYL, rowH, labelColW);

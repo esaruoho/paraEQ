@@ -729,6 +729,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         1.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "chebyPolyPow", "Cheby per-poly pow",
+        juce::NormalisableRange<float>(0.25f, 4.0f, 0.001f, 0.5f, true),
+        1.0f,
+        juce::AudioParameterFloatAttributes().withLabel("k")));
 
     static const char* chebyHarmIds[12] = {
         "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
@@ -1557,6 +1562,7 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const float chebyYC = apvts.getRawParameterValue("chebyYC")->load();
     const float chebyYR = apvts.getRawParameterValue("chebyYR")->load();
     const float chebyHarmMacro = apvts.getRawParameterValue("chebyHarmMacro")->load();
+    const float chebyPolyPow = apvts.getRawParameterValue("chebyPolyPow")->load();
     float harm12[12];
     static const char* kChebyHarmPid[12] = {
         "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
@@ -1570,14 +1576,16 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     const int chebyMaxN = paketti::chebyMaxActiveN(harmScaled);
     const bool chebyHarmonicsOn = chebyMaxN > 1;
     const bool chebyCurveDc = paketti::chebyCurveHasDc(chebyYL, chebyYC, chebyYR);
+    const bool chebyPolyPowNonUnity = std::abs(chebyPolyPow - 1.f) > 1.0e-4f;
+    const bool chebyNeedsDcBlock = chebyCurveDc || chebyPolyPowNonUnity;
     const bool shaperEngaged = (!linearListen && shaperModeIdx > 0 && shaperMix > 1.0e-7f
                                  && ((shaperModeIdx == 1) || (shaperModeIdx == 2 && chebyHarmonicsOn)));
 
     const float* chebyLutRead = nullptr;
     if (shaperEngaged && shaperModeIdx == 2 && chebyLutBuilder != nullptr)
     {
-        const std::uint32_t nh = paketti::hashChebyParams(chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro);
-        chebyLutRead = chebyLutBuilder->resolveLut(nh, chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyLutSyncScratch);
+        const std::uint32_t nh = paketti::hashChebyParams(chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow);
+        chebyLutRead = chebyLutBuilder->resolveLut(nh, chebyYL, chebyYC, chebyYR, harm12, chebyHarmMacro, chebyPolyPow, chebyLutSyncScratch);
     }
 
     for (int n = 0; n < numSamps; ++n)
@@ -1729,7 +1737,7 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     y = paketti::chebyLutEval(chebyLutRead, paketti::kChebyLutPoints, u);
                 }
                 float delta = (y - u) * shaperPostTrim;
-                if (shaperModeIdx == 2 && chebyCurveDc)
+                if (shaperModeIdx == 2 && chebyNeedsDcBlock)
                     delta = paketti::dcBlockIir(delta, pakettiChebyDcX1[i], pakettiChebyDcY1[i]);
                 x += shaperMix * delta;
             }
@@ -2132,6 +2140,7 @@ void ParaEQ301AudioProcessor::applyFactoryPreset(int index)
         apvtsSetFloatPlain(ap, "chebyYC", 0.f);
         apvtsSetFloatPlain(ap, "chebyYR", 1.f);
         apvtsSetFloatPlain(ap, "chebyHarmMacro", 1.f);
+        apvtsSetFloatPlain(ap, "chebyPolyPow", 1.f);
         static const char* zChebyH[12] = {
             "chebyH2", "chebyH3", "chebyH4", "chebyH5", "chebyH6", "chebyH7",
             "chebyH8", "chebyH9", "chebyH10", "chebyH11", "chebyH12", "chebyH13"

@@ -63,17 +63,36 @@ namespace paketti
         return 1;
     }
 
-    /** Build normalized LUT: input in [-1,1] maps to nl(curve(x)) scaled to peak 0.99. */
-    inline void rebuildChebyLut(float yL, float yC, float yR, const float* harm12, float* lut, int lutSize) noexcept
+    /** Signed power: sign(t) * pow(|t|, k). Identity when k==1. */
+    inline float signedPow(float t, float k) noexcept
+    {
+        if (std::abs(k - 1.f) < 1.0e-6f)
+            return t;
+        const float a = std::abs(t);
+        if (a < 1.0e-20f)
+            return 0.f;
+        return std::copysign(std::pow(a, k), t);
+    }
+
+    /** Build normalized LUT: input in [-1,1] maps to nl(curve(x)) scaled to peak 0.99.
+        `polyPow` applies signed pow() to each Tn(x) before the weighted sum (Lassi's per-polynomial shaper).
+        polyPow == 1.0f is the original behavior. */
+    inline void rebuildChebyLut(float yL, float yC, float yR, const float* harm12, float polyPow,
+                                float* lut, int lutSize) noexcept
     {
         if (lut == nullptr || lutSize < 2)
             return;
-        float coeffs[14] {};
-        coeffs[0] = 0.f;
-        coeffs[1] = 0.f;
-        for (int i = 0; i < kChebyHarmonics; ++i)
-            coeffs[i + 2] = harm12[(size_t) i];
         const int maxN = juce::jmax(1, chebyMaxActiveN(harm12));
+        const bool useClenshaw = std::abs(polyPow - 1.f) < 1.0e-6f;
+
+        float coeffs[14] {};
+        if (useClenshaw)
+        {
+            coeffs[0] = 0.f;
+            coeffs[1] = 0.f;
+            for (int i = 0; i < kChebyHarmonics; ++i)
+                coeffs[i + 2] = harm12[(size_t) i];
+        }
 
         float maxAbs = 0.f;
         for (int i = 0; i < lutSize; ++i)
@@ -81,7 +100,29 @@ namespace paketti
             const float t = (lutSize <= 1) ? 0.f : (float) i / (float) (lutSize - 1);
             const float xDom = -1.f + 2.f * t;
             const float u = chebyPrecurve(xDom, yL, yC, yR);
-            const float y = chebyClenshaw(u, coeffs, maxN);
+
+            float y;
+            if (useClenshaw)
+            {
+                y = chebyClenshaw(u, coeffs, maxN);
+            }
+            else
+            {
+                // Explicit Tn recurrence so per-polynomial signedPow can shape each harmonic independently.
+                float Tprev = 1.f;     // T0(u)
+                float Tcurr = u;       // T1(u)
+                y = 0.f;
+                for (int k = 2; k <= maxN; ++k)
+                {
+                    const float Tn = 2.f * u * Tcurr - Tprev;
+                    Tprev = Tcurr;
+                    Tcurr = Tn;
+                    const float w = harm12[(size_t) (k - 2)];
+                    if (std::abs(w) > 1.0e-24f)
+                        y += w * signedPow(Tn, polyPow);
+                }
+            }
+
             lut[(size_t) i] = y;
             maxAbs = juce::jmax(maxAbs, std::abs(y));
         }
@@ -172,13 +213,14 @@ namespace paketti
         return y;
     }
 
-    inline uint32_t hashChebyParams(float yL, float yC, float yR, const float* h12, float harmMacro01) noexcept
+    inline uint32_t hashChebyParams(float yL, float yC, float yR, const float* h12, float harmMacro01,
+                                    float polyPow) noexcept
     {
         auto q = [](float v) -> uint32_t
         {
             return (uint32_t) juce::roundToInt(v * 10000.f);
         };
-        uint32_t h = q(yL) ^ (q(yC) << 1) ^ (q(yC) >> 3) ^ (q(yR) << 2) ^ (q(harmMacro01) << 5);
+        uint32_t h = q(yL) ^ (q(yC) << 1) ^ (q(yC) >> 3) ^ (q(yR) << 2) ^ (q(harmMacro01) << 5) ^ (q(polyPow) << 7);
         for (int i = 0; i < kChebyHarmonics; ++i)
             h ^= q(h12[(size_t) i]) << (unsigned) (i % 17);
         return h;
