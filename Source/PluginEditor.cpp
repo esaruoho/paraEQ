@@ -30,14 +30,29 @@ juce::Label* PeqPluginSliderValueLookAndFeel::createSliderTextBox(juce::Slider& 
 
 namespace
 {
-    /** Convert a long-text Label into a "(?)" button. Hides the source label; click opens AlertWindow with its text. */
+    /** Convert a long-text Label into a "(?)" button. Hides the source; click opens CallOutBox (auto-closes on outside click). */
     inline void wireInfoButton(juce::TextButton& btn, juce::Label& source, const juce::String& title)
     {
         btn.setButtonText("?");
         btn.setTooltip("Show description");
-        btn.onClick = [src = &source, t = title]
+        btn.onClick = [src = &source, t = title, btnPtr = &btn]
         {
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, t, src->getText(true));
+            auto content = std::make_unique<juce::Label>();
+            const auto body = (t.isNotEmpty() ? "[" + t + "]\n\n" : juce::String()) + src->getText(true);
+            content->setText(body, juce::dontSendNotification);
+            content->setJustificationType(juce::Justification::topLeft);
+            content->setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+            content->setColour(juce::Label::textColourId, juce::Colours::white);
+            content->setColour(juce::Label::backgroundColourId, juce::Colour(0xff1a1a1a));
+            content->setBorderSize(juce::BorderSize<int>(10, 12, 10, 12));
+            content->setMinimumHorizontalScale(1.0f);
+            juce::AttributedString a(body);
+            a.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+            juce::TextLayout layout;
+            layout.createLayout(a, 420.0f);
+            const int textH = juce::roundToInt(layout.getHeight()) + 28;
+            content->setSize(440, juce::jlimit(60, 360, textH));
+            juce::CallOutBox::launchAsynchronously(std::move(content), btnPtr->getScreenBounds(), nullptr);
         };
         source.setVisible(false);
     }
@@ -3018,6 +3033,24 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         sl.setBounds(slX, row.getY(), juce::jmax(160, row.getRight() - slX), rowH);
     }
 
+    static void placeVertCol(juce::Rectangle<int>& row, juce::Label& cap, juce::Slider& sl, int colW)
+    {
+        if (row.getWidth() < colW) return;
+        auto col = row.removeFromLeft(colW);
+        cap.setBounds(col.getX(), col.getY(), col.getWidth(), 14);
+        sl.setBounds(col.getX(), col.getY() + 14, col.getWidth(), col.getHeight() - 14);
+        row.removeFromLeft(4);
+    }
+
+    void styleVertSlider(juce::Slider& s)
+    {
+        s.setSliderStyle(juce::Slider::LinearVertical);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+        s.setColour(juce::Slider::trackColourId, kAccentGreen.withAlpha(0.9f));
+        s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
+        s.setColour(juce::Slider::thumbColourId, kAccentBlue);
+    }
+
     ShaperTabContent(juce::AudioProcessorValueTreeState& ap,
                      std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
                      std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>&,
@@ -3214,11 +3247,11 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         }
 
         constexpr int kShValH = 20;
-        constexpr int kShPctW = 58;
-        constexpr int kShGainW = 70;   // "10.00 x"
-        constexpr int kShMagW = 62;
-        constexpr int kShChebyYW = 58;
-        constexpr int kShChebyHW = 64;
+        constexpr int kShPctW = 72;
+        constexpr int kShGainW = 72;
+        constexpr int kShMagW = 72;
+        constexpr int kShChebyYW = 72;
+        constexpr int kShChebyHW = 72;
         auto styleShaperReadout = [&](juce::Slider& s, int boxW)
         {
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kShValH);
