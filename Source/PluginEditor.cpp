@@ -3464,7 +3464,9 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabScrollHost : public juce::Viewpor
         const int w = juce::jmax(1, getWidth());
         const int h = juce::jmax(1, getHeight());
         const int minH = content->getMinimumContentHeight();
-        content->setBounds(0, 0, w, juce::jmax(h, minH));
+        const bool needsScroll = minH > h;
+        const int scrollW = needsScroll ? getScrollBarThickness() : 0;
+        content->setBounds(0, 0, juce::jmax(1, w - scrollW), juce::jmax(h, minH));
         juce::Viewport::resized();
     }
 
