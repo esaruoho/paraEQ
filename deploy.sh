@@ -18,8 +18,10 @@ echo "deploy.sh: (1/4) build"
 
 AU_NAME="ParaEQ 301.component"
 VST3_NAME="ParaEQ 301.vst3"
+STANDALONE_NAME="ParaEQ 301.app"
 AU_SRC="$ROOT/build/ParaEQ301_artefacts/Release/AU/$AU_NAME"
 VST3_SRC="$ROOT/build/ParaEQ301_artefacts/Release/VST3/$VST3_NAME"
+STANDALONE_SRC="$ROOT/build/ParaEQ301_artefacts/Release/Standalone/$STANDALONE_NAME"
 
 if [[ ! -d "$AU_SRC" ]]; then
   echo "deploy.sh: missing AU bundle: $AU_SRC" >&2
@@ -42,6 +44,13 @@ cp -R "$VST3_SRC" "$VST3_DST/"
 echo "deploy.sh: (3/4) dequarantine (xattr -dr com.apple.quarantine …)"
 xattr -dr com.apple.quarantine "$AU_DST/$AU_NAME"
 xattr -dr com.apple.quarantine "$VST3_DST/$VST3_NAME"
+
+if [[ -d "$STANDALONE_SRC" ]]; then
+  xattr -dr com.apple.quarantine "$STANDALONE_SRC" 2>/dev/null || true
+  echo "deploy.sh: launching Standalone preview ($STANDALONE_SRC)"
+  pkill -f "ParaEQ 301.app/Contents/MacOS/ParaEQ 301" 2>/dev/null || true
+  open "$STANDALONE_SRC"
+fi
 
 if [[ "${DEPLOY_NO_PUSH:-}" == "1" ]]; then
   echo ""

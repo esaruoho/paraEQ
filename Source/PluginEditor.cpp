@@ -3336,7 +3336,7 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         const int modeIdx = shaperModeBox.getSelectedItemIndex(); // 0=Off, 1=Magnet, 2=Chebyshev
         const bool magOn = (modeIdx == 1);
         const bool chebyOn = (modeIdx == 2);
-        const bool detailOn = chebyOn || chebyDetailToggle.getToggleState();
+        const bool detailOn = chebyDetailToggle.getToggleState();
         const int harmRows = (chebyOn && detailOn) ? 24 : 0;
         const int magRows = magOn ? 9 : 0;
         const int magHeadRows = magOn ? 1 : 0;
