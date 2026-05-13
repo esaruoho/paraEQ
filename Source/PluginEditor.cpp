@@ -1903,7 +1903,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
                 constexpr int kToggleW = 148;
                 auto toggleArea = coreRow.removeFromLeft(juce::jmin(kToggleW, juce::jmax(96, coreRow.getWidth() / 4)));
                 const int cy = toggleArea.getCentreY() - 11;
-                on.setBounds(toggleArea.getX() + 2, cy, toggleArea.getWidth() - 4, 22);
+                on.setBounds(toggleArea.getX() + 1, cy, toggleArea.getWidth() - 2, 22);
                 auto rest = coreRow.reduced(6, 2);
                 constexpr int kLabelSatW = 42;
                 auto labArea = rest.removeFromRight(kLabelSatW);
