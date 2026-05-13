@@ -3311,14 +3311,13 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
 
     int getMinimumContentHeight() const noexcept
     {
-        constexpr int kOuterPad = 16;
-        constexpr int kIntroMax = 120;
-        constexpr int kRowH = 32;
-        const int harmRows = chebyDetailToggle.getToggleState() ? 24 : 0;
-        constexpr int kBaseSliderRows = 3 + 9 + 1 + 2 + 3;
-        const int kSliderRows = kBaseSliderRows + harmRows;
-        constexpr int kSectionGap = 2 * 24;
-        return kOuterPad + kIntroMax + 8 + 26 + 6 + kSliderRows * kRowH + kSectionGap + 32;
+        // Vertical-slider layout: one main row (~110px) + optional Cheby H + Pow rows (~110px each).
+        constexpr int kColH = 110;
+        constexpr int kHeaderH = 30;
+        constexpr int kPad = 24;
+        const int modeIdx = shaperModeBox.getSelectedItemIndex();
+        const int extraRows = (modeIdx == 2) ? 2 : ((modeIdx == 1) ? 1 : 0); // cheby: 2 detail rows; magnet: shape combo row.
+        return kPad + kHeaderH + kColH + extraRows * (kColH + 6) + kPad;
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
@@ -3336,7 +3335,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         const int modeIdx = shaperModeBox.getSelectedItemIndex(); // 0=Off, 1=Magnet, 2=Chebyshev
         const bool magOn = (modeIdx == 1);
         const bool chebyOn = (modeIdx == 2);
-        const bool detailOn = chebyDetailToggle.getToggleState();
+        const bool detailOn = chebyOn;  // H2-H13 + Pow always visible in Chebyshev mode.
+        chebyDetailToggle.setVisible(false);
         const int harmRows = (chebyOn && detailOn) ? 24 : 0;
         const int magRows = magOn ? 9 : 0;
         const int magHeadRows = magOn ? 1 : 0;
@@ -3403,22 +3403,17 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             placeRowCols({ {&shaperMixL,&shaperMix}, {&shaperPreGainL,&shaperPreGain}, {&shaperPostTrimL,&shaperPostTrim},
                            {&chebyHarmMacroL,&chebyHarmMacro}, {&chebyPolyPowL,&chebyPolyPow},
                            {&chebyYLL,&chebyYL}, {&chebyYCL,&chebyYC}, {&chebyYRL,&chebyYR} }, colWMain);
-            b.removeFromTop(6);
-            auto detRow = b.removeFromTop(28);
-            chebyDetailToggle.setBounds(detRow.getX(), detRow.getY() + 2, juce::jmin(340, detRow.getWidth()), 24);
             b.removeFromTop(4);
-            if (detailOn)
-            {
-                // 12 H weights on one row, 12 H pow on one row.
-                auto hRow = b.removeFromTop(kColH);
-                for (int i = 0; i < 12; ++i)
-                    placeVertCol(hRow, chebyHL[(size_t) i], chebyH[(size_t) i], colWDetail);
-                b.removeFromTop(2);
-                auto pRow = b.removeFromTop(kColH);
-                for (int i = 0; i < 12; ++i)
-                    placeVertCol(pRow, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], colWDetail);
-                b.removeFromTop(2);
-            }
+            // 12 H weights on one row, 12 H pow on one row — always shown in Chebyshev mode.
+            auto hRow = b.removeFromTop(kColH);
+            for (int i = 0; i < 12; ++i)
+                placeVertCol(hRow, chebyHL[(size_t) i], chebyH[(size_t) i], colWDetail);
+            b.removeFromTop(2);
+            auto pRow = b.removeFromTop(kColH);
+            for (int i = 0; i < 12; ++i)
+                placeVertCol(pRow, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], colWDetail);
+            b.removeFromTop(2);
+            juce::ignoreUnused(detailOn);
         }
         else
         {
