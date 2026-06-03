@@ -1,4 +1,5 @@
 build/
+dist/
 cmake-build-*/
 .DS_Store
 *.xcodeproj/xcuserdata/
