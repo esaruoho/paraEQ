@@ -1,0 +1,86 @@
+<!-- OG/social tags: Gumroad STRIPS <meta> from custom_html (verified via `products page
+     preview` → sanitization removes all <meta>). On the LIVE page these are injected by
+     Gumroad into <head> from the product thumbnail/cover, so og:image is served there
+     (curl https://lackluster.gumroad.com/l/joucal | grep og:image). These tags are kept
+     here so the landing.html FILE validates standalone and documents the intended card. -->
+<meta property="og:title" content="ParaEQ 301 — a parametric EQ that finishes the sound">
+<meta property="og:type" content="product">
+<meta property="og:url" content="https://lackluster.gumroad.com/l/joucal">
+<meta property="og:description" content="A parametric EQ that finishes the sound and makes it move — and lets you switch every bit of its colour off, so you stay in control. AU · VST3 · macOS.">
+<meta property="og:image" content="https://public-files.gumroad.com/yrty7xt2zft2w7vm3elm7k3fvycy">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://public-files.gumroad.com/yrty7xt2zft2w7vm3elm7k3fvycy">
+<style>
+  html, body { background:#0d0f12 !important; margin:0 !important; }
+  .paraeq-bg { position:fixed; inset:0; width:100vw; height:100vh;
+            background:#0d0f12; z-index:0; }
+  .paraeq { --ink:#0d0f12; --paper:#f3f1ea; --orange:#ff7a1a; --dim:#9aa0a8;
+            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            color:var(--paper); background:var(--ink); line-height:1.55;
+            position:relative; z-index:1; min-height:100vh;
+            width:100%; box-sizing:border-box; padding:48px 8vw; }
+  .paraeq * { box-sizing:border-box; }
+  .paraeq .wrap { max-width:1100px; margin:0 auto; }
+  .paraeq h1 { font-size:3rem; letter-spacing:-.02em; margin:0 0 .2em; }
+  .paraeq .kicker { color:var(--orange); font-weight:700; letter-spacing:.1em;
+            text-transform:uppercase; font-size:.8rem; margin:0 0 16px; }
+  .paraeq .lede { color:#d7d3c8; font-size:1.25rem; max-width:760px; margin:0 0 36px; }
+  .paraeq .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+            gap:22px; margin:0 0 40px; }
+  .paraeq .gwt { border:1px solid #23262b; border-left:3px solid var(--orange);
+            border-radius:10px; padding:18px 20px; background:#101216; }
+  .paraeq .gwt h3 { margin:0 0 10px; font-size:1.18rem; }
+  .paraeq .gwt p { margin:.3em 0; }
+  .paraeq .g { color:var(--dim); } .paraeq .w { color:#cdd2d8; }
+  .paraeq .t { color:var(--paper); font-weight:600; }
+  .paraeq .cta { text-align:center; padding:8px 0 4px; }
+  .paraeq .price { color:var(--dim); font-size:1rem; margin:0 0 12px; }
+  .paraeq .buy { display:inline-block; background:var(--orange); color:#1a1206;
+            font-weight:800; font-size:1.2rem; text-decoration:none; cursor:pointer;
+            padding:16px 34px; border:0; border-radius:10px; }
+  .paraeq .reassure { color:var(--dim); font-size:.92rem; margin:14px 0 0; }
+  .paraeq .foot { color:var(--dim); font-size:.82rem; margin-top:32px;
+            border-top:1px solid #23262b; padding-top:18px; }
+</style>
+<div class="paraeq-bg" style="position:fixed;inset:0;background:#0d0f12;z-index:0;"></div>
+<div class="paraeq" style="position:relative;z-index:1;min-height:100vh;width:100%;background:#0d0f12;color:#f3f1ea;padding:48px 8vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+ <div class="wrap" style="max-width:1100px;margin:0 auto;">
+
+  <p class="kicker">AU · VST3 · macOS</p>
+  <h1>ParaEQ&nbsp;301</h1>
+  <p class="lede">A parametric EQ that <strong>finishes</strong> the sound and makes it
+  <strong>move</strong> — and lets you switch every bit of its colour off, so you stay in
+  control by ear. One plugin. Bought once. Yours.</p>
+
+  <div class="grid">
+    <div class="gwt">
+      <h3>① Finishes the sound — not just corrects it</h3>
+      <p class="g">Your EQ gets the frequencies right but the track still sounds flat and digital.</p>
+      <p class="w">Shape it through ParaEQ — the same parametric bands, with its saturation and shaper stages in the chain.</p>
+      <p class="t">→ The move that used to sound <em>corrected</em> now sounds <em>finished</em>: weight and warmth, not just a curve.</p>
+    </div>
+    <div class="gwt">
+      <h3>② Nothing hidden — A/B against clean</h3>
+      <p class="g">You don't trust "character" plugins that smear the mix and hide behind hype.</p>
+      <p class="w">Flip <strong>Linear EQ only</strong> and compare the clean parametric against the full chain.</p>
+      <p class="t">→ You hear <em>exactly</em> what ParaEQ adds, and keep only what serves the song. No faith required.</p>
+    </div>
+    <div class="gwt">
+      <h3>③ Make a frequency <em>breathe</em></h3>
+      <p class="g">A static EQ can boost a band, but it can never make it move.</p>
+      <p class="w">Bring up the resonator cores and Motion — saturating bandpass resonance, parametric pumping, an LFO across the bands.</p>
+      <p class="t">→ A flat element starts to move and sing in a way ordinary EQ simply can't.</p>
+    </div>
+  </div>
+
+  <div class="cta">
+    <p class="price">€135.40 — one purchase, no subscription</p>
+    <a class="buy" data-gumroad-action="buy" href="https://lackluster.gumroad.com/l/joucal">Get ParaEQ&nbsp;301</a>
+    <p class="reassure">Run it on a track you know. Keep it only if it makes the record better —
+    a refund is one click away. The risk is mine, not yours.</p>
+  </div>
+
+  <p class="foot">macOS Audio Unit &amp; VST3. Built by Esa Ruoho / Lackluster.</p>
+
+ </div>
+</div>
