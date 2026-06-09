@@ -40,16 +40,21 @@ namespace
     constexpr float kTwoPi = juce::MathConstants<float>::twoPi;
     constexpr int kCoeffUpdateInterval = 4;
 
-    /** Spectral default: mid travel. Threshold/ratio defaults are transparent (no GR) until user dials them. */
+    /** All three ThrillMe knobs default to normalised 0.5 (centre = "affect nothing", like the original):
+        spectral mid-travel, threshold 0 dB, ratio 1:1. Ranges below are symmetric about the transparent
+        value so the centre detent is the neutral point; turn one way to engage GR (the far half stays
+        transparent because the DSP clamps thrDb>0 and ratio>128 to no-op). */
     constexpr float kThrillSpecDefault = 0.5f;
 
-    /** 0 dB = do not compress until band envelope exceeds full scale (line-level mixes stay open). */
+    /** 0 dB = do not compress until band envelope exceeds full scale (line-level mixes stay open).
+        Sits at the centre of the symmetric -80..+80 dB range → normalised 0.5. */
     inline float thrillThresholdDefaultDb() noexcept
     {
         return 0.0f;
     }
 
-    /** Stored value 129 - R = 1 (true 1:1); wet path matches dry dynamics until ratio is turned harder. */
+    /** Stored value 129 - R = 1 (true 1:1); wet path matches dry dynamics until ratio is turned harder.
+        Sits at the centre of the 1..255 range → normalised 0.5 (the 128..255 half is clamped to 1:1). */
     inline float thrillRatioDefaultStored() noexcept
     {
         return 128.0f;
@@ -406,12 +411,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1ThreshDb", "ThrillMe 1 threshold",
-        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
+        juce::NormalisableRange<float>(-80.0f, 80.0f, 0.1f),
         thrillThresholdDefaultDb(),
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill1Ratio", "ThrillMe 1 ratio",
-        juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
+        juce::NormalisableRange<float>(1.0f, 255.0f, 0.1f),
         thrillRatioDefaultStored(),
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
@@ -422,12 +427,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::AudioParameterFloatAttributes().withLabel("%")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2ThreshDb", "ThrillMe 2 threshold",
-        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f, 0.32f),
+        juce::NormalisableRange<float>(-80.0f, 80.0f, 0.1f),
         thrillThresholdDefaultDb(),
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "thrill2Ratio", "ThrillMe 2 ratio",
-        juce::NormalisableRange<float>(1.0f, 128.0f, 0.1f, 0.35f),
+        juce::NormalisableRange<float>(1.0f, 255.0f, 0.1f),
         thrillRatioDefaultStored(),
         juce::AudioParameterFloatAttributes().withLabel(":1")));
 
@@ -655,6 +660,51 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.22f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("parexEnable", "Parametric excitation", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "parexMix", "ParEx mix",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.25f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "parexBaseHz", "ParEx base Hz",
+        freqRangeSkewed(40.0f, 8000.0f, 220.0f),
+        110.0f,
+        eqHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "parexQ", "ParEx Q",
+        juce::NormalisableRange<float>(0.5f, 40.0f, 0.05f, 0.42f),
+        8.0f,
+        juce::AudioParameterFloatAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "parexRatio", "ParEx pump ratio",
+        juce::StringArray{ "1/2 (sub)", "1/1", "2/1 (Mathieu)", "3/1", "4/1" }, 2));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "parexDepth", "ParEx depth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.35f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "parexDrive", "ParEx drive",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.30f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "parexPumpSrc", "ParEx pump source",
+        juce::StringArray{ "Internal", "Envelope" }, 1));
+
+    layout.add(std::make_unique<juce::AudioParameterBool>("testToneOn", "Test sine", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "testToneHz", "Test sine Hz",
+        freqRangeSkewed(20.0f, 16000.0f, 440.0f),
+        220.0f,
+        eqHzParameterAttributes()));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "testToneDb", "Test sine level",
+        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f),
+        -18.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     juce::StringArray shaperModeItems;
     shaperModeItems.add("Off");
@@ -891,6 +941,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         for (int p = 0; p < kAnharmMaxPartials; ++p)
             anharmPeakPerChannel[si][(size_t) p].prepare(spec);
         aprResonator[si].prepare(currentSampleRate);
+        parexResonator[si].prepare(currentSampleRate);
     }
 
     {
@@ -914,6 +965,7 @@ void ParaEQ301AudioProcessor::prepareToPlay(const double sampleRate, int samples
         coreDcLow[i] = 0.f;
         vaSvfPerChannel[i].reset();
         aprResonator[i].reset();
+        parexResonator[i].reset();
         pakettiMagnetState[i].y1 = 0.f;
         pakettiMagnetState[i].env = 0.f;
         pakettiChebyDcX1[i] = 0.f;
@@ -1482,6 +1534,24 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
     // Narrow Q bandpass passes little broadband energy; scale wet so high-Q presets stay hearable (Q=8 → ~1×).
     const float aprQmakeup = juce::jlimit(0.4f, 5.5f, std::sqrt(juce::jmax(0.5f, aprQ) * 0.125f));
 
+    const bool parexOn = apvts.getRawParameterValue("parexEnable")->load() > 0.5f;
+    const float parexMix = apvts.getRawParameterValue("parexMix")->load();
+    const float parexBaseHz = apvts.getRawParameterValue("parexBaseHz")->load();
+    const float parexQ = apvts.getRawParameterValue("parexQ")->load();
+    const float parexDepth = apvts.getRawParameterValue("parexDepth")->load();
+    const float parexDrive = apvts.getRawParameterValue("parexDrive")->load();
+    int parexRatioIdx = 2;
+    if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("parexRatio")))
+        parexRatioIdx = juce::jlimit(0, 4, c->getIndex());
+    static constexpr float kParexRatioTable[5] = { 0.5f, 1.f, 2.f, 3.f, 4.f };
+    const float parexRatio = kParexRatioTable[(size_t) parexRatioIdx];
+    int parexPumpSrc = 1;
+    if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("parexPumpSrc")))
+        parexPumpSrc = juce::jlimit(0, 1, c->getIndex());
+    // Same Q-makeup philosophy as APR — narrow BP passes little broadband energy, so wet level
+    // gets compensated when Q is high. Keeps the Mix knob psychoacoustically uniform.
+    const float parexQmakeup = juce::jlimit(0.4f, 5.5f, std::sqrt(juce::jmax(0.5f, parexQ) * 0.125f));
+
     const float dHiG = apvts.getRawParameterValue("lfoHiDepthGain")->load();
     const float dHiC = apvts.getRawParameterValue("lfoHiDepthCf")->load();
     const float dM1G = apvts.getRawParameterValue("lfoM1DepthGain")->load();
@@ -1739,6 +1809,12 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
                     x += aprMix * (bp * aprQmakeup);
                 }
+                if (parexOn && parexMix > 1.0e-7f)
+                {
+                    const float bp = parexResonator[i].process(x, parexBaseHz, parexQ, parexRatio,
+                                                                parexDepth, parexDrive, parexPumpSrc, aprEnvCoeffProc);
+                    x += parexMix * (bp * parexQmakeup);
+                }
                 if (!std::isfinite(x))
                     x = 0.0f;
                 data[n] = x;
@@ -1890,6 +1966,13 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                 const float bp = aprResonator[i].process(x, aprBaseHz, aprQ, aprPumpHz, aprPumpDepth, aprAutoTrack, aprDrive, aprEnvCoeffProc);
                 x += aprMix * (bp * aprQmakeup);
             }
+            // Parametric Excitation: bandpass with cutoff pumped at ratio*f0 (Mathieu). Sits in parallel with APR.
+            if (parexOn && parexMix > 1.0e-7f)
+            {
+                const float bp = parexResonator[i].process(x, parexBaseHz, parexQ, parexRatio,
+                                                            parexDepth, parexDrive, parexPumpSrc, aprEnvCoeffProc);
+                x += parexMix * (bp * parexQmakeup);
+            }
             if (!std::isfinite(x))
                 x = 0.0f;
             data[n] = x;
@@ -1940,11 +2023,41 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int numCh = juce::jmin(buffer.getNumChannels(), maxChannelsPrepared);
     const int numSamps = buffer.getNumSamples();
 
+    const bool testToneOn = apvts.getRawParameterValue("testToneOn")->load() > 0.5f;
+    if (testToneOn && numCh > 0 && numSamps > 0)
+    {
+        const float testHz = apvts.getRawParameterValue("testToneHz")->load();
+        const float testAmp = juce::Decibels::decibelsToGain(apvts.getRawParameterValue("testToneDb")->load());
+        const double phaseInc = juce::MathConstants<double>::twoPi
+                                * (double) juce::jmax(0.01f, testHz) / juce::jmax(1.0, srHost);
+        for (int n = 0; n < numSamps; ++n)
+        {
+            const float s = testAmp * (float) std::sin(testTonePhase);
+            for (int ch = 0; ch < numCh; ++ch)
+                buffer.getWritePointer(ch)[n] = s;
+            testTonePhase += phaseInc;
+            if (testTonePhase >= juce::MathConstants<double>::twoPi)
+                testTonePhase -= juce::MathConstants<double>::twoPi;
+        }
+    }
+
     if (numCh > 0 && numSamps > 0
         && dryMixScratch.getNumChannels() >= numCh && dryMixScratch.getNumSamples() >= numSamps)
     {
         for (int ch = 0; ch < numCh; ++ch)
             dryMixScratch.copyFrom(ch, 0, buffer, ch, 0, numSamps);
+
+        // Capture INPUT into scope ring (post test-tone substitution, pre-chain).
+        scopeInSeq.fetch_add(1, std::memory_order_acq_rel);
+        const float* srcIn = buffer.getReadPointer(0);
+        int posIn = scopeRingInPos;
+        for (int n = 0; n < numSamps; ++n)
+        {
+            scopeRingIn[posIn] = srcIn[n];
+            posIn = (posIn + 1) & (kScopeRingSize - 1);
+        }
+        scopeRingInPos = posIn;
+        scopeInSeq.fetch_add(1, std::memory_order_acq_rel);
     }
 
     const float inRms = blockRms(buffer, numCh, numSamps);
@@ -2036,8 +2149,65 @@ void ParaEQ301AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float outRms = blockRms(buffer, numCh, numSamps);
     pushDebugMeters(inRms, outRms);
 
+    if (numCh > 0 && numSamps > 0)
+    {
+        scopeSeq.fetch_add(1, std::memory_order_acq_rel);
+        const float* src = buffer.getReadPointer(0);
+        int pos = scopeRingPos;
+        for (int n = 0; n < numSamps; ++n)
+        {
+            scopeRing[pos] = src[n];
+            pos = (pos + 1) & (kScopeRingSize - 1);
+        }
+        scopeRingPos = pos;
+        scopeSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+
     for (int i = 0; i < 4; ++i)
         motionLfoUiPhase[(size_t) i].store(lfoPhase[(size_t) i], std::memory_order_relaxed);
+}
+
+double ParaEQ301AudioProcessor::getScopeSamples(float* outSamples, int numSamples) const noexcept
+{
+    if (outSamples == nullptr || numSamples <= 0)
+        return currentSampleRate;
+    numSamples = juce::jmin(numSamples, kScopeRingSize);
+    // Seqlock-style read: retry if writer is in the middle of an update.
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const auto s0 = scopeSeq.load(std::memory_order_acquire);
+        if ((s0 & 1u) != 0u)
+            continue;
+        const int pos = scopeRingPos;
+        const int start = (pos - numSamples + kScopeRingSize) & (kScopeRingSize - 1);
+        for (int i = 0; i < numSamples; ++i)
+            outSamples[i] = scopeRing[(start + i) & (kScopeRingSize - 1)];
+        const auto s1 = scopeSeq.load(std::memory_order_acquire);
+        if (s0 == s1)
+            return currentSampleRate;
+    }
+    return currentSampleRate;
+}
+
+double ParaEQ301AudioProcessor::getScopeInputSamples(float* outSamples, int numSamples) const noexcept
+{
+    if (outSamples == nullptr || numSamples <= 0)
+        return currentSampleRate;
+    numSamples = juce::jmin(numSamples, kScopeRingSize);
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const auto s0 = scopeInSeq.load(std::memory_order_acquire);
+        if ((s0 & 1u) != 0u)
+            continue;
+        const int pos = scopeRingInPos;
+        const int start = (pos - numSamples + kScopeRingSize) & (kScopeRingSize - 1);
+        for (int i = 0; i < numSamples; ++i)
+            outSamples[i] = scopeRingIn[(start + i) & (kScopeRingSize - 1)];
+        const auto s1 = scopeInSeq.load(std::memory_order_acquire);
+        if (s0 == s1)
+            return currentSampleRate;
+    }
+    return currentSampleRate;
 }
 
 void ParaEQ301AudioProcessor::getMotionLfoPhases(float* outFour) const noexcept

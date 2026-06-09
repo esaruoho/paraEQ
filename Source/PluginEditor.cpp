@@ -555,7 +555,8 @@ namespace
                                      bool drawRoundedBackground,
                                      int freqAxisInsetLeftPx = kEqMagFreqAxisInsetL,
                                      int freqAxisInsetRightPx = kEqMagFreqAxisInsetR,
-                                     bool drawDecorations = true)
+                                     bool drawDecorations = true,
+                                     bool drawPath = true)
     {
         if (graphOuter.getHeight() < 22 || nPts < 2)
             return;
@@ -751,6 +752,9 @@ namespace
             return (float) curve.getBottom() - norm * (float) curve.getHeight();
         };
 
+        if (!drawPath)
+            return;
+
         juce::Path path;
         bool started = false;
         float prevDbg = 0.f;
@@ -876,6 +880,14 @@ namespace
         g.setColour(juce::Colour(0xff353535));
         g.drawRoundedRectangle(graph.toFloat(), 4.f, 1.f);
 
+        // Grid / dB rulers / band markers FIRST, so the spectrum + IIR curves overlay them
+        // (the horizontal dB grid lines must sit behind the audio visualiser, not on top of it).
+        ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot curveSnap;
+        proc.getMotionEffectiveEqSnapshot(curveSnap);
+        paintEqMagnitudeCurveInRect(g, graph, freqHz, eqMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
+                                    &proc.getAPVTS(), &curveSnap, kAccentGreen, false,
+                                    kEqMagFreqAxisInsetL, kEqMagFreqAxisInsetR, /*drawDecorations*/ true, /*drawPath*/ false);
+
         juce::Rectangle<int> freqGraph = graph;
         freqGraph.removeFromLeft(kEqMagFreqAxisInsetL);
         freqGraph.removeFromRight(kEqMagFreqAxisInsetR);
@@ -979,8 +991,6 @@ namespace
         freqBand.removeFromRight(kEqMagFreqAxisInsetR);
 
         const juce::Colour kAnharmTheoryMint(0xff5ed4b6);
-        ParaEQ301AudioProcessor::MotionEffectiveEqSnapshot curveSnap;
-        proc.getMotionEffectiveEqSnapshot(curveSnap);
         if (apCurve.getRawParameterValue("anharmBankEnable")->load() > 0.5f && !linearEqListen)
         {
             const float f0 = apCurve.getRawParameterValue("anharmFundHz")->load();
@@ -1013,7 +1023,8 @@ namespace
         }
 
         paintEqMagnitudeCurveInRect(g, graph, freqHz, eqMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
-                                    &proc.getAPVTS(), &curveSnap, kAccentGreen, false);
+                                    &proc.getAPVTS(), &curveSnap, kAccentGreen, false,
+                                    kEqMagFreqAxisInsetL, kEqMagFreqAxisInsetR, /*drawDecorations*/ false);
         if (showMintTheory)
             paintEqMagnitudeCurveInRect(g, graph, freqHz, comboMagSmoothed.data(), nPts, kEqMagPlotDbMin, kEqMagPlotDbMax, fLo, fHi,
                                         nullptr, nullptr, kAnharmTheoryMint, false, kEqMagFreqAxisInsetL, kEqMagFreqAxisInsetR, false);
@@ -2998,6 +3009,357 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabScrollHost : public juce::Vie
     std::unique_ptr<ParametricTabContent> content;
 };
 
+struct ParexScopeView : public juce::Component, private juce::Timer
+{
+    explicit ParexScopeView(ParaEQ301AudioProcessor& p) : proc(p)
+    {
+        samples.resize((size_t) ParaEQ301AudioProcessor::kScopeRingSize, 0.f);
+        samplesIn.resize((size_t) ParaEQ301AudioProcessor::kScopeRingSize, 0.f);
+        setInterceptsMouseClicks(false, false);
+        startTimerHz(30);
+    }
+    ~ParexScopeView() override { stopTimer(); }
+
+    static void drawTrace(juce::Graphics& g,
+                          const std::vector<float>& s,
+                          int triggerIdx,
+                          float yScale,
+                          juce::Rectangle<float> r,
+                          float midY,
+                          juce::Colour col,
+                          float strokeW)
+    {
+        const int n = (int) s.size();
+        const int shown = juce::jmax(2, n - triggerIdx);
+        const float xStep = r.getWidth() / (float) shown;
+        juce::Path p;
+        p.startNewSubPath(r.getX(), midY - s[(size_t) triggerIdx] * yScale);
+        for (int i = 1; i < shown; ++i)
+        {
+            const float x = r.getX() + i * xStep;
+            const float y = midY - s[(size_t) (triggerIdx + i)] * yScale;
+            p.lineTo(x, y);
+        }
+        g.setColour(col);
+        g.strokePath(p, juce::PathStrokeType(strokeW));
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.fillAll(juce::Colour(0xff050505));
+        g.setColour(juce::Colour(0xff222222));
+        g.drawRect(r, 1.0f);
+        g.setColour(juce::Colour(0xff1a1a1a));
+        const float midY = r.getCentreY();
+        g.drawHorizontalLine((int) midY, r.getX(), r.getRight());
+
+        const int n = (int) samples.size();
+        if (n < 2)
+            return;
+
+        // Delta = chain modification (output - input). For the ParEx tab this is essentially
+        // the parametric-excitation contribution (plus anything else the chain is doing).
+        if (delta.size() != samples.size())
+            delta.assign(samples.size(), 0.f);
+        for (size_t i = 0; i < samples.size(); ++i)
+            delta[i] = samples[i] - samplesIn[i];
+
+        float peakOut = 1.0e-6f, peakIn = 1.0e-6f, peakDelta = 1.0e-6f;
+        for (float v : samples)   peakOut   = juce::jmax(peakOut,   std::abs(v));
+        for (float v : samplesIn) peakIn    = juce::jmax(peakIn,    std::abs(v));
+        for (float v : delta)     peakDelta = juce::jmax(peakDelta, std::abs(v));
+        const float peak = juce::jmax(peakOut, peakIn);
+        const float yScale = (r.getHeight() * 0.45f) / juce::jmax(0.05f, peak);
+
+        // Trigger on the output's first positive-going zero crossing so all traces share an x-anchor.
+        int triggerIdx = 0;
+        for (int i = 1; i < n - 1; ++i)
+        {
+            if (samples[(size_t) i - 1] <= 0.f && samples[(size_t) i] > 0.f)
+            {
+                triggerIdx = i;
+                break;
+            }
+        }
+
+        // Input (dim grey, thin) drawn first.
+        drawTrace(g, samplesIn, triggerIdx, yScale, r, midY, juce::Colour(0xff707070), 1.0f);
+        // Output (accent blue, thicker).
+        drawTrace(g, samples,   triggerIdx, yScale, r, midY, juce::Colour(0xff6eb5ff), 1.4f);
+        // Delta / parex contribution (warm green) on top so it's easy to spot.
+        drawTrace(g, delta,     triggerIdx, yScale, r, midY, juce::Colour(0xff5cb85c), 1.2f);
+
+        g.setColour(juce::Colour(0xff888888));
+        g.setFont(juce::Font(juce::FontOptions()
+                                 .withName(juce::Font::getDefaultMonospacedFontName())
+                                 .withHeight(10.0f)));
+        g.drawText("scope: in (grey)  out (blue)  parex/chain delta (green)   "
+                       "inPk=" + juce::String(peakIn, 3)
+                       + "  outPk=" + juce::String(peakOut, 3)
+                       + "  dPk=" + juce::String(peakDelta, 3),
+                   (int) r.getX() + 6, (int) r.getY() + 4, 600, 12,
+                   juce::Justification::left);
+    }
+
+    void timerCallback() override
+    {
+        proc.getScopeSamples(samples.data(), (int) samples.size());
+        proc.getScopeInputSamples(samplesIn.data(), (int) samplesIn.size());
+        repaint();
+    }
+
+    ParaEQ301AudioProcessor& proc;
+    std::vector<float> samples;
+    std::vector<float> samplesIn;
+    std::vector<float> delta;
+};
+
+struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
+{
+    juce::Label intro;
+    juce::TextButton infoBtn;
+    juce::ToggleButton parexEnableToggle { "Parametric excitation" };
+    juce::Slider parexMix;
+    juce::Label parexMixL;
+    juce::Slider parexBaseHz;
+    juce::Label parexBaseHzL;
+    juce::Slider parexQ;
+    juce::Label parexQL;
+    juce::Label parexRatioL;
+    juce::ComboBox parexRatioBox;
+    juce::Slider parexDepth;
+    juce::Label parexDepthL;
+    juce::Slider parexDriveS;
+    juce::Label parexDriveL;
+    juce::Label parexPumpSrcL;
+    juce::ComboBox parexPumpSrcBox;
+    juce::ToggleButton testToneToggle { "Sine test signal" };
+    juce::Slider testToneHz;
+    juce::Label testToneHzL;
+    juce::Slider testToneDb;
+    juce::Label testToneDbL;
+    std::unique_ptr<ParexScopeView> scope;
+
+    static void placeWideSliderRow(juce::Rectangle<int>& area, juce::Label& cap, juce::Slider& sl, int rowH, int labelColW)
+    {
+        auto row = area.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY() + (rowH - 14) / 2, labelColW, 14);
+        const int slX = row.getX() + labelColW + 8;
+        sl.setBounds(slX, row.getY(), juce::jmax(160, row.getRight() - slX), rowH);
+    }
+    static void placeWideComboRow(juce::Rectangle<int>& area, juce::Label& cap, juce::ComboBox& cb, int rowH, int labelColW)
+    {
+        auto row = area.removeFromTop(rowH);
+        cap.setBounds(row.getX(), row.getY() + (rowH - 14) / 2, labelColW, 14);
+        const int cbX = row.getX() + labelColW + 8;
+        cb.setBounds(cbX, row.getY() + (rowH - 22) / 2, juce::jmax(160, row.getRight() - cbX), 22);
+    }
+
+    ParexTabContent(ParaEQ301AudioProcessor& processor,
+                    juce::AudioProcessorValueTreeState& ap,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+    {
+        scope = std::make_unique<ParexScopeView>(processor);
+        addAndMakeVisible(*scope);
+        styleLabelDark(intro,
+                       "Parametric Excitation: bandpass whose cutoff is pumped at a rational multiple of its own f0 "
+                       "(Mathieu / Hill equation). The 2/1 ratio sits on the first instability tongue and grows energy at f0 "
+                       "(sub-octave from the pump). Internal pump = continuous sinusoid; Envelope = pump only when there is "
+                       "program energy to excite (signal-driven body / shimmer). Tanh in the SVF loop limits exponential growth.",
+                       true);
+        intro.setJustificationType(juce::Justification::topLeft);
+        intro.setFont(juce::Font(juce::FontOptions()
+                                     .withName(juce::Font::getDefaultMonospacedFontName())
+                                     .withHeight(11.0f)));
+        addAndMakeVisible(intro);
+        wireInfoButton(infoBtn, intro, "ParEx");
+        addAndMakeVisible(infoBtn);
+
+        styleToggleDark(parexEnableToggle);
+        parexEnableToggle.setTooltip("Enable parametric excitation. Needs Mix % > 0 to hear wet signal.");
+        addAndMakeVisible(parexEnableToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "parexEnable", parexEnableToggle));
+
+        auto wirePct = [&](juce::Slider& s, juce::Label& lab, const char* id, const juce::String& name, const juce::String& tip)
+        {
+            styleLinearSliderCompact(s, kAccentGreen);
+            styleLabelDark(lab, name, true);
+            addAndMakeVisible(s);
+            addAndMakeVisible(lab);
+            s.setTooltip(tip);
+            atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, id, s));
+            s.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+            s.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        };
+
+        wirePct(parexMix, parexMixL, "parexMix", "Mix %", "Wet level into the parallel mix.");
+
+        styleLinearSliderCompact(parexBaseHz, kAccentBlue);
+        styleLabelDark(parexBaseHzL, "f0 (Hz)", true);
+        addAndMakeVisible(parexBaseHz);
+        addAndMakeVisible(parexBaseHzL);
+        parexBaseHz.setTooltip("Resonator natural frequency. With ratio 2/1 and a kick at 55 Hz, set f0 = 55 Hz for octave-down body.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "parexBaseHz", parexBaseHz));
+        parexBaseHz.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " Hz"; };
+        parexBaseHz.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(parexQ, kAccentGreen);
+        styleLabelDark(parexQL, "Q", true);
+        addAndMakeVisible(parexQ);
+        addAndMakeVisible(parexQL);
+        parexQ.setTooltip("Resonator Q. Higher Q sharpens the tongue but also narrows the resonance — a bell, not a swell.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "parexQ", parexQ));
+        parexQ.textFromValueFunction = [](double v) { return juce::String(v, 2); };
+        parexQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLabelDark(parexRatioL, "Pump ratio", true);
+        addAndMakeVisible(parexRatioL);
+        stylePeqComboBox(parexRatioBox);
+        parexRatioBox.setTooltip("Pump = ratio * f0. 2/1 is the classic Mathieu first tongue (sub-octave at f0). "
+                                 "1/2 pumps below f0. 3/1 and 4/1 give higher harmonic content.");
+        addAndMakeVisible(parexRatioBox);
+        if (auto* pc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("parexRatio")))
+            parexRatioBox.addItemList(pc->choices, 1);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "parexRatio", parexRatioBox));
+
+        wirePct(parexDepth, parexDepthL, "parexDepth", "Depth %",
+                "Pump depth. Internally bounded against Q so 100% sits just past the Mathieu stability boundary — "
+                "tanh handles the rest.");
+        wirePct(parexDriveS, parexDriveL, "parexDrive", "Drive %",
+                "Tanh strength inside the SVF loop. Higher drive flattens the resonance into more harmonic / chaotic territory.");
+
+        styleLabelDark(parexPumpSrcL, "Pump source", true);
+        addAndMakeVisible(parexPumpSrcL);
+        stylePeqComboBox(parexPumpSrcBox);
+        parexPumpSrcBox.setTooltip("Internal = constant pump (continuous parametric oscillator feel). "
+                                   "Envelope = pump magnitude follows program envelope (signal-driven excitation).");
+        addAndMakeVisible(parexPumpSrcBox);
+        if (auto* pc = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("parexPumpSrc")))
+            parexPumpSrcBox.addItemList(pc->choices, 1);
+        comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "parexPumpSrc", parexPumpSrcBox));
+
+        styleToggleDark(testToneToggle);
+        testToneToggle.setTooltip("Replace plugin input with a steady sine wave so the post-chain scope shows what the plugin is doing to a clean tone.");
+        addAndMakeVisible(testToneToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "testToneOn", testToneToggle));
+
+        styleLinearSliderCompact(testToneHz, kAccentBlue);
+        styleLabelDark(testToneHzL, "Sine Hz", true);
+        addAndMakeVisible(testToneHz);
+        addAndMakeVisible(testToneHzL);
+        testToneHz.setTooltip("Frequency of the internal test sine. Set to the resonator f0 to watch it grow / clip; set to f0/2 to see 2:1 sub-octave generation.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "testToneHz", testToneHz));
+        testToneHz.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " Hz"; };
+        testToneHz.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        styleLinearSliderCompact(testToneDb, kAccentGreen);
+        styleLabelDark(testToneDbL, "Sine level", true);
+        addAndMakeVisible(testToneDb);
+        addAndMakeVisible(testToneDbL);
+        testToneDb.setTooltip("Test sine level in dBFS.");
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "testToneDb", testToneDb));
+        testToneDb.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+        testToneDb.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
+
+        constexpr int kVH = 20;
+        constexpr int kHzBoxW = 92;
+        constexpr int kPctBoxW = 92;
+        constexpr int kQBoxW = 92;
+        auto styleReadout = [&](juce::Slider& s, int boxW)
+        {
+            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, boxW, kVH);
+        };
+        styleReadout(parexMix, kPctBoxW);
+        styleReadout(parexBaseHz, kHzBoxW);
+        styleReadout(parexQ, kQBoxW);
+        styleReadout(parexDepth, kPctBoxW);
+        styleReadout(parexDriveS, kPctBoxW);
+        styleReadout(testToneHz, kHzBoxW);
+        styleReadout(testToneDb, kPctBoxW);
+    }
+
+    int getMinimumContentHeight() const noexcept
+    {
+        constexpr int kOuterPad = 16;
+        constexpr int kAfterIntro = 26 + 6;
+        constexpr int kRowH = 32;
+        constexpr int kParamRows = 10; // mix, f0, Q, ratio, depth, drive, pumpSrc, sineOn, sineHz, sineDb
+        constexpr int kScopeH = 150;
+        return kOuterPad + kAfterIntro + kParamRows * kRowH + kScopeH + 14;
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(kPanelBlack); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced(8);
+        infoBtn.setBounds(getWidth() - 32, 4, 24, 22);
+        auto toggles = b.removeFromTop(26);
+        toggles.removeFromRight(32);
+        parexEnableToggle.setBounds(toggles.removeFromLeft(280));
+        b.removeFromTop(6);
+
+        constexpr int kScopeH = 150;
+        auto scopeArea = b.removeFromBottom(kScopeH);
+        scopeArea.removeFromTop(6);
+        if (scope != nullptr)
+            scope->setBounds(scopeArea);
+
+        constexpr int kParamRows = 10;
+        constexpr int kRowH = 32;
+        const int paramNeed = kParamRows * kRowH;
+        int bodyH = juce::jmax(1, b.getHeight());
+        if (bodyH > paramNeed)
+            b.removeFromBottom(bodyH - paramNeed);
+        bodyH = juce::jmax(1, b.getHeight());
+        const int rowH = juce::jmin(kRowH, juce::jmax(20, bodyH / kParamRows));
+        const int labelColW = juce::jlimit(120, 188, b.getWidth() / 3);
+
+        placeWideSliderRow(b, parexMixL, parexMix, rowH, labelColW);
+        placeWideSliderRow(b, parexBaseHzL, parexBaseHz, rowH, labelColW);
+        placeWideSliderRow(b, parexQL, parexQ, rowH, labelColW);
+        placeWideComboRow(b, parexRatioL, parexRatioBox, rowH, labelColW);
+        placeWideSliderRow(b, parexDepthL, parexDepth, rowH, labelColW);
+        placeWideSliderRow(b, parexDriveL, parexDriveS, rowH, labelColW);
+        placeWideComboRow(b, parexPumpSrcL, parexPumpSrcBox, rowH, labelColW);
+
+        auto sineToggleRow = b.removeFromTop(rowH);
+        testToneToggle.setBounds(sineToggleRow.getX(), sineToggleRow.getY() + (rowH - 22) / 2, 280, 22);
+
+        placeWideSliderRow(b, testToneHzL, testToneHz, rowH, labelColW);
+        placeWideSliderRow(b, testToneDbL, testToneDb, rowH, labelColW);
+    }
+};
+
+struct ParaEQ301AudioProcessorEditor::ParexTabScrollHost : public juce::Viewport
+{
+    explicit ParexTabScrollHost(ParaEQ301AudioProcessor& processor,
+                                juce::AudioProcessorValueTreeState& ap,
+                                std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>>& atts,
+                                std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>>& batts,
+                                std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>>& comboAtts)
+        : content(std::make_unique<ParexTabContent>(processor, ap, atts, batts, comboAtts))
+    {
+        setViewedComponent(content.get(), false);
+        setScrollBarsShown(true, false);
+        setScrollBarThickness(9);
+    }
+
+    void resized() override
+    {
+        const int w = juce::jmax(1, getWidth());
+        const int h = juce::jmax(1, getHeight());
+        const int minH = content->getMinimumContentHeight();
+        content->setBounds(0, 0, w, juce::jmax(h, minH));
+        juce::Viewport::resized();
+    }
+
+    std::unique_ptr<ParexTabContent> content;
+};
+
 struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
 {
     juce::Label intro;
@@ -3497,6 +3859,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     shaperTabScroll = std::make_unique<ShaperTabScrollHost>(ap, attachments, buttonAttachments, comboAttachments);
     anharmTabScroll = std::make_unique<AnharmTabScrollHost>(ap, attachments, buttonAttachments);
     parametricTabScroll = std::make_unique<ParametricTabScrollHost>(ap, attachments, buttonAttachments);
+    parexTabScroll = std::make_unique<ParexTabScrollHost>(proc, ap, attachments, buttonAttachments, comboAttachments);
     outPage = std::make_unique<OutTabContent>(proc, ap, attachments, buttonAttachments);
 
     tabs.addTab("EQ", kPanelBlack, eqTabScroll.get(), false);
@@ -3504,6 +3867,7 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     tabs.addTab("Shaper", kPanelBlack, shaperTabScroll.get(), false);
     tabs.addTab("Anharm", kPanelBlack, anharmTabScroll.get(), false);
     tabs.addTab("APR", kPanelBlack, parametricTabScroll.get(), false);
+    tabs.addTab("ParEx", kPanelBlack, parexTabScroll.get(), false);
     tabs.addTab("Output", kPanelBlack, outPage.get(), false);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, kPanelBlack);

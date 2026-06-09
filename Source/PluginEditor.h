@@ -31,6 +31,8 @@ private:
     struct AnharmTabScrollHost;
     struct ParametricTabContent;
     struct ParametricTabScrollHost;
+    struct ParexTabContent;
+    struct ParexTabScrollHost;
     struct ShaperTabContent;
     struct ShaperTabScrollHost;
     struct OutTabContent;
@@ -44,6 +46,7 @@ private:
     std::unique_ptr<RoastTabScrollHost> roastTabScroll;
     std::unique_ptr<AnharmTabScrollHost> anharmTabScroll;
     std::unique_ptr<ParametricTabScrollHost> parametricTabScroll;
+    std::unique_ptr<ParexTabScrollHost> parexTabScroll;
     std::unique_ptr<ShaperTabScrollHost> shaperTabScroll;
     std::unique_ptr<OutTabContent> outPage;
 

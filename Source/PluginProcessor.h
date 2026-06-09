@@ -5,6 +5,7 @@
 #include "ParametricEqDesign.h"
 #include "ThrillMeTone.h"
 #include "AutoparametricResonator.h"
+#include "ParametricExcitation.h"
 #include "PakettiShapers.h"
 #include "ChebyLutBuilder.h"
 #include <atomic>
@@ -86,6 +87,14 @@ public:
     /** Log-spaced EQ magnitude snapshot size; Curve + EQ tabs must use this count so GUI reads eqCurveMagPublished (no audio-thread coeff races). */
     static constexpr int kEqCurvePlotPoints = 220;
     static constexpr int kAnharmMaxPartials = 6;
+    static constexpr int kScopeRingSize = 2048;
+
+    /** Copy the last kScopeRingSize post-chain output samples (ch 0) into outSamples (size N <= kScopeRingSize),
+        oldest first. Returns the host sample rate the ring is filled at. UI-thread safe (snapshot copy). */
+    double getScopeSamples(float* outSamples, int numSamples) const noexcept;
+
+    /** Same as getScopeSamples but for the plugin INPUT (post test-tone substitution, pre-chain). */
+    double getScopeInputSamples(float* outSamples, int numSamples) const noexcept;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -148,6 +157,7 @@ private:
 
     std::array<VaNonlinearSvfChannel, 4> vaSvfPerChannel;
     std::array<AutoparametricResonatorChannel, 4> aprResonator {};
+    std::array<ParametricExcitationChannel, 4> parexResonator {};
 
     std::unique_ptr<ChebyLutBuilder> chebyLutBuilder;
     std::array<float, paketti::kChebyLutPoints> chebyLutSyncScratch {};
@@ -232,6 +242,14 @@ private:
     juce::AudioBuffer<float> dryMixScratch;
 
     int currentFactoryProgram = 0;
+
+    double testTonePhase = 0.0;
+    float scopeRing[kScopeRingSize] {};
+    float scopeRingIn[kScopeRingSize] {};
+    int scopeRingPos = 0;
+    int scopeRingInPos = 0;
+    mutable std::atomic<std::uint32_t> scopeSeq { 0 };
+    mutable std::atomic<std::uint32_t> scopeInSeq { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ParaEQ301AudioProcessor)
 };
