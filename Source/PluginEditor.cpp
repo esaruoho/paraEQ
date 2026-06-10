@@ -1729,7 +1729,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
                                      juce::Colour fill, const juce::String& tip)
         {
             styleLinearSliderCompact(s, fill);
-            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 18);
+            // Wide enough for "-80 dB" / "128:1" / "100 %" so the value never gets an ellipsis.
+            s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 18);
             styleLabel(cap, capText);
             addAndMakeVisible(s);
             addAndMakeVisible(cap);
@@ -1758,7 +1759,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             const int shown = juce::jlimit(1, 128, t.upToFirstOccurrenceOf(":", false, false).getIntValue());
             return (double) (129 - shown);
         };
-        thrill1Thr.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+        thrill1Thr.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " dB"; };
         thrill1Thr.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
 
         thrill1Spec.textFromValueFunction = [](double v)
