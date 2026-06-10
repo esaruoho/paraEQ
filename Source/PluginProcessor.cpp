@@ -829,20 +829,41 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
 
     layout.add(std::make_unique<juce::AudioParameterBool>("lfoHostSync", "LFO host tempo sync", false));
 
+    // Fastest at the top, slowest at the bottom; each straight value is followed by its triplet
+    // (and dotted, where present), so 1/16 -> 1/16 triplet -> 1/16 dot read in a column.
+    // Indices must stay in lock-step with beatsPerCycle[] in motionLfoHzFromSyncDivision().
     juce::StringArray lfoSyncDivItems;
-    lfoSyncDivItems.add("1/64");
-    lfoSyncDivItems.add("1/32");
-    lfoSyncDivItems.add("1/16");
-    lfoSyncDivItems.add("1/8");
-    lfoSyncDivItems.add("1/4");
-    lfoSyncDivItems.add("1/2");
-    lfoSyncDivItems.add("1 bar");
-    lfoSyncDivItems.add("2 bars");
-    lfoSyncDivItems.add("1/16 triplet");
-    lfoSyncDivItems.add("1/8 triplet");
-    lfoSyncDivItems.add("1/4 triplet");
-    lfoSyncDivItems.add("1/32 triplet");
-    layout.add(std::make_unique<juce::AudioParameterChoice>("lfoHostSyncDiv", "LFO sync division", lfoSyncDivItems, 3));
+    lfoSyncDivItems.add("1/64");          // 0
+    lfoSyncDivItems.add("1/32");          // 1
+    lfoSyncDivItems.add("1/32 triplet");  // 2
+    lfoSyncDivItems.add("1/16");          // 3
+    lfoSyncDivItems.add("1/16 triplet");  // 4
+    lfoSyncDivItems.add("1/16 dot");      // 5
+    lfoSyncDivItems.add("1/8");           // 6
+    lfoSyncDivItems.add("1/8 triplet");   // 7
+    lfoSyncDivItems.add("1/4");           // 8
+    lfoSyncDivItems.add("1/4 triplet");   // 9
+    lfoSyncDivItems.add("1/2");           // 10
+    lfoSyncDivItems.add("1 bar");         // 11
+    lfoSyncDivItems.add("2 bars");        // 12
+    lfoSyncDivItems.add("4 bars");        // 13
+    lfoSyncDivItems.add("8 bars");        // 14
+    lfoSyncDivItems.add("16 bars");       // 15
+    lfoSyncDivItems.add("32 bars");       // 16
+    lfoSyncDivItems.add("64 bars");       // 17
+    layout.add(std::make_unique<juce::AudioParameterChoice>("lfoHostSyncDiv", "LFO sync division", lfoSyncDivItems, 6));
+
+    // "Rate jitter": when BPM sync is on, a slow LFO morphs the synced rate between half-time and
+    // double-time of the chosen division (depth 1 = 0.5x..2x). Off by default = steady synced rate.
+    layout.add(std::make_unique<juce::AudioParameterBool>("lfoSyncJitterEnable", "LFO sync jitter", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "lfoSyncJitterDepth", "LFO jitter depth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("")));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "lfoSyncJitterRateHz", "LFO jitter rate",
+        juce::NormalisableRange<float>(0.01f, 4.0f, 0.01f, 0.4f), 0.2f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
     // 0 Hz = LFO phase frozen (no sweep); >0 starts from very slow rates.
     auto lfoRateRange = juce::NormalisableRange<float>(0.0f, 14.0f, 0.01f, 0.35f);
@@ -1350,19 +1371,27 @@ namespace
     /** LFO Hz when tempo-synced; `divIdx` matches APVTS `lfoHostSyncDiv` (quarter note = 1 beat). */
     float motionLfoHzFromSyncDivision(float bpm, int divIdx) noexcept
     {
+        // Quarter note = 1 beat; whole note = 4 beats; one bar (4/4) = 4 beats.
+        // Triplet = base * 2/3; dotted = base * 3/2. Order matches lfoSyncDivItems above.
         static constexpr float beatsPerCycle[] = {
-            1.f / 16.f, // 0: 1/64
-            1.f / 8.f,  // 1: 1/32
-            1.f / 4.f,  // 2: 1/16
-            1.f / 2.f,  // 3: 1/8
-            1.f,        // 4: 1/4
-            2.f,        // 5: 1/2
-            4.f,        // 6: 1 bar (4/4)
-            8.f,        // 7: 2 bars
-            1.f / 6.f,  // 8: 1/16 triplet
-            1.f / 3.f,  // 9: 1/8 triplet
-            2.f / 3.f,  // 10: 1/4 triplet
-            1.f / 12.f  // 11: 1/32 triplet
+            4.f / 64.f,             // 0:  1/64
+            4.f / 32.f,             // 1:  1/32
+            (4.f / 32.f) * 2.f / 3.f, // 2:  1/32 triplet
+            4.f / 16.f,             // 3:  1/16
+            (4.f / 16.f) * 2.f / 3.f, // 4:  1/16 triplet
+            (4.f / 16.f) * 3.f / 2.f, // 5:  1/16 dot
+            4.f / 8.f,              // 6:  1/8
+            (4.f / 8.f) * 2.f / 3.f,  // 7:  1/8 triplet
+            1.f,                    // 8:  1/4
+            1.f * 2.f / 3.f,        // 9:  1/4 triplet
+            2.f,                    // 10: 1/2
+            4.f,                    // 11: 1 bar (4/4)
+            8.f,                    // 12: 2 bars
+            16.f,                   // 13: 4 bars
+            32.f,                   // 14: 8 bars
+            64.f,                   // 15: 16 bars
+            128.f,                  // 16: 32 bars
+            256.f                   // 17: 64 bars
         };
         constexpr int n = int(sizeof(beatsPerCycle) / sizeof(beatsPerCycle[0]));
         divIdx = juce::jlimit(0, n - 1, divIdx);
@@ -1593,9 +1622,24 @@ void ParaEQ301AudioProcessor::processRoastAndEqBlock(juce::dsp::AudioBlock<float
                     }
                 }
         if (haveBpm)
+            hzHi = hzM1 = hzM2 = hzLo = motionLfoHzFromSyncDivision((float) bpm, divIdx);
+    }
+
+    // Rate jitter: a slow LFO morphs the effective Motion rate between half-time and double-time.
+    // Applies to the synced rate (when BPM sync is on) AND the free-running per-band Hz, so the
+    // effect is audible/visible in any host - including the Standalone, which supplies no tempo.
+    {
+        const bool jitterOn = apvts.getRawParameterValue("lfoSyncJitterEnable")->load() > 0.5f;
+        const float jitterDepth = apvts.getRawParameterValue("lfoSyncJitterDepth")->load();
+        if (jitterOn && jitterDepth > 1.0e-6f)
         {
-            const float hzSync = motionLfoHzFromSyncDivision((float) bpm, divIdx);
-            hzHi = hzM1 = hzM2 = hzLo = hzSync;
+            const float jitterHz = apvts.getRawParameterValue("lfoSyncJitterRateHz")->load();
+            // factor in [2^-depth, 2^+depth]; depth 1 -> 0.5x .. 2x around the current rate.
+            const float lfo = std::sin(kTwoPi * static_cast<float>(syncJitterPhase));
+            const float factor = std::pow(2.f, jitterDepth * lfo);
+            hzHi *= factor; hzM1 *= factor; hzM2 *= factor; hzLo *= factor;
+            syncJitterPhase += static_cast<double>(jitterHz) * static_cast<double>(numSamps) / sr;
+            syncJitterPhase -= std::floor(syncJitterPhase);
         }
     }
 

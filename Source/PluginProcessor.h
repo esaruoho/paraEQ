@@ -244,6 +244,8 @@ private:
     int currentFactoryProgram = 0;
 
     double testTonePhase = 0.0;
+    /** Phase (0..1) of the slow LFO that jitters the BPM-synced Motion rate when lfoSyncJitterEnable is on. */
+    double syncJitterPhase = 0.0;
     float scopeRing[kScopeRingSize] {};
     float scopeRingIn[kScopeRingSize] {};
     int scopeRingPos = 0;

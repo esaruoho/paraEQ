@@ -199,6 +199,8 @@ namespace
         static constexpr int gapAfterGraph = 2;
         static constexpr int motionLineH = 26;
         static constexpr int gapAfterMotion = 1;
+        static constexpr int syncJitterRowH = 24;
+        static constexpr int gapAfterSyncJitter = 1;
         static constexpr int coreRowH = 26;
         static constexpr int coreBetweenRows = 1;
         static constexpr int thrillRowH = 28;
@@ -224,7 +226,8 @@ namespace
         /** Everything below the graph except the graph itself. */
         static constexpr int chromeBelowGraph() noexcept
         {
-            return gapAfterGraph + motionLineH + gapAfterMotion + coreStripH() + gapBeforeBands + bandMotionPairH();
+            return gapAfterGraph + motionLineH + gapAfterMotion + syncJitterRowH + gapAfterSyncJitter
+                   + coreStripH() + gapBeforeBands + bandMotionPairH();
         }
         /** Minimum total content height: chrome + EQ graph strip + tab vertical margins (otherwise graphH == 0). */
         static constexpr int minimumContentHeight() noexcept
@@ -869,7 +872,9 @@ namespace
         }
 
         auto plot = fullArea.reduced(0, 2);
-        plot.removeFromBottom(11);
+        // Legend row ABOVE the graph (was below, where it collided with the 100/1k/10k freq-axis labels).
+        juce::Rectangle<int> legendStrip = plot.removeFromTop(11);
+        plot.removeFromBottom(11); // freq-axis labels live below the graph
         if (plot.getHeight() < 36)
             return;
 
@@ -1034,7 +1039,7 @@ namespace
         juce::String leg = "Spectrum (white pre-EQ / blue post) + 4-band IIR";
         if (showMintTheory)
             leg += "   Mint: linear (SVF0 + bank)";
-        g.drawText(leg, graph.getX(), graph.getBottom() + 1, graph.getWidth(), 11, juce::Justification::centred);
+        g.drawText(leg, legendStrip.getX(), legendStrip.getY(), legendStrip.getWidth(), legendStrip.getHeight(), juce::Justification::centred);
     }
 }
 
@@ -1364,6 +1369,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     juce::TextButton motionInfoBtn;
     juce::ToggleButton lfoHostSyncToggle { "BPM sync" };
     juce::ComboBox lfoHostSyncDivBox;
+    juce::ToggleButton lfoSyncJitterToggle { "Jitter" };
+    juce::Slider lfoSyncJitterDepth;
+    juce::Slider lfoSyncJitterRate;
     juce::ToggleButton eqPinkBalToggle { "EQ level balance" };
     TooltipMouseProxy motionOverviewHitEq;
     std::unique_ptr<LfoTabContent> lfoStrip;
@@ -1592,13 +1600,39 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         addAndMakeVisible(lfoHostSyncToggle);
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "lfoHostSync", lfoHostSyncToggle));
 
-        lfoHostSyncDivBox.setTooltip("Length of one Motion LFO cycle when BPM sync is on (straight and triplet divisions).");
+        lfoHostSyncDivBox.setTooltip("Length of one Motion LFO cycle when BPM sync is on. Fastest at top, slowest at bottom; "
+                                     "each straight value is followed by its triplet (and dotted), up to 64 bars.");
         if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(ap.getParameter("lfoHostSyncDiv")))
             lfoHostSyncDivBox.addItemList(c->choices, 1);
         stylePeqComboBox(lfoHostSyncDivBox);
         addAndMakeVisible(lfoHostSyncDivBox);
         comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "lfoHostSyncDiv", lfoHostSyncDivBox));
         lfoHostSyncDivBox.setEnabled(ap.getRawParameterValue("lfoHostSync")->load() > 0.5f);
+
+        // BPM-sync rate jitter: enable + depth + speed. A slow LFO morphs the synced rate between
+        // half-time and double-time of the chosen division. Self-labelling (toggle text + value boxes).
+        styleToggleDark(lfoSyncJitterToggle);
+        lfoSyncJitterToggle.setTooltip("When BPM sync is on, a slow LFO morphs the synced Motion rate between half-time and "
+                                       "double-time of the chosen division. Off = steady synced rate.");
+        addAndMakeVisible(lfoSyncJitterToggle);
+        batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "lfoSyncJitterEnable", lfoSyncJitterToggle));
+
+        styleLinearSliderCompact(lfoSyncJitterDepth, kAccentBlue);
+        lfoSyncJitterDepth.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 18);
+        lfoSyncJitterDepth.setTooltip("Jitter depth. 0% = off; 100% = synced rate swings between half-time (0.5x) and double-time (2x).");
+        lfoSyncJitterDepth.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v * 100.0)) + " %"; };
+        lfoSyncJitterDepth.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0); };
+        addAndMakeVisible(lfoSyncJitterDepth);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lfoSyncJitterDepth", lfoSyncJitterDepth));
+        lfoSyncJitterDepth.updateText();
+
+        styleLinearSliderCompact(lfoSyncJitterRate, kAccentGreen);
+        lfoSyncJitterRate.setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 18);
+        lfoSyncJitterRate.setTooltip("Jitter LFO speed in Hz (how fast the synced rate breathes between half-time and double-time).");
+        lfoSyncJitterRate.textFromValueFunction = [](double v) { return juce::String(v, 2) + " Hz"; };
+        addAndMakeVisible(lfoSyncJitterRate);
+        atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "lfoSyncJitterRateHz", lfoSyncJitterRate));
+        lfoSyncJitterRate.updateText();
 
         motionOverviewHitEq.setTooltip(
             "Hi / M1 / M2 / Lo rows modulate those EQ bands around the values on the EQ tab (LFO). EQ gain depth up to +/-12 dB around the knob; freq and width sweep similarly. Blue dots = LFO phase.\n\n"
@@ -1858,6 +1892,8 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         const bool bpmSyncOn = ap.getRawParameterValue("lfoHostSync")->load() > 0.5f;
         lfoHostSyncDivBox.setEnabled(bpmSyncOn);
+        // Jitter toggle + depth + rate are always interactive (no greying); the toggle gates the
+        // EFFECT, not slider usability. Jitter modulates the Motion rate whether synced or free-running.
 
         const bool followLive = motionLfoDepthActive(ap) && s.motionEngaged && eqSliderGestureDepth == 0
                                 && !eqTextBoxHasKeyboardFocus();
@@ -1940,6 +1976,21 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             motionStatus.setBounds(motionRow.reduced(4, 0));
         }
         bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterMotion);
+
+        {
+            // Dedicated full-width row for the BPM-sync rate-jitter LFO: wide depth + rate sliders.
+            auto jitRow = bounds.removeFromTop((int) PeqEqTabLayoutMetrics::syncJitterRowH);
+            const int jcy = jitRow.getCentreY() - 11;
+            auto toggleArea = jitRow.removeFromLeft(juce::jlimit(72, 96, jitRow.getWidth() / 7));
+            lfoSyncJitterToggle.setBounds(toggleArea.getX() + 2, jcy, juce::jmax(1, toggleArea.getWidth() - 4), 22);
+            // Split the rest evenly between depth and rate (each ~6x wider than the old cramped pair).
+            const int halfW = juce::jmax(60, jitRow.getWidth() / 2);
+            auto depthArea = jitRow.removeFromLeft(halfW);
+            auto rateArea = jitRow;
+            lfoSyncJitterDepth.setBounds(depthArea.reduced(3, 3));
+            lfoSyncJitterRate.setBounds(rateArea.reduced(3, 3));
+        }
+        bounds.removeFromTop((int) PeqEqTabLayoutMetrics::gapAfterSyncJitter);
 
         {
             auto coreBlock = bounds.removeFromTop((int) PeqEqTabLayoutMetrics::coreStripH());
@@ -3408,6 +3459,34 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
     std::array<juce::Slider, 12> chebyHPow {};
     std::array<juce::Label, 12> chebyHPowL {};
 
+    /** Transparent overlay over a 12-column harmonic slider row: click/drag to "draw" values across
+        columns in one gesture (x -> column, y -> value) instead of dragging each slider one by one. */
+    struct HarmDrawStrip : public juce::Component, public juce::SettableTooltipClient
+    {
+        std::function<void(int col, float yNorm)> onDraw;
+        int numCols = 12;
+        HarmDrawStrip() { setInterceptsMouseClicks(true, false); }
+        void mouseDown(const juce::MouseEvent& e) override { handle(e); }
+        void mouseDrag(const juce::MouseEvent& e) override { handle(e); }
+        void handle(const juce::MouseEvent& e)
+        {
+            const int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0 || !onDraw)
+                return;
+            const int col = juce::jlimit(0, numCols - 1, (e.x * numCols) / w);
+            const float yNorm = juce::jlimit(0.f, 1.f, 1.f - (float) e.y / (float) h);
+            onDraw(col, yNorm);
+        }
+        void paint(juce::Graphics& g) override
+        {
+            // Faint top/bottom guide so it reads as a drawable surface; sliders show through.
+            g.setColour(kAccentBlue.withAlpha(0.05f));
+            g.fillRect(getLocalBounds());
+        }
+    };
+    HarmDrawStrip harmDrawStrip;
+    HarmDrawStrip powDrawStrip;
+
     static void placeWideSliderRow(juce::Rectangle<int>& area, juce::Label& cap, juce::Slider& sl, int rowH, int labelColW)
     {
         auto row = area.removeFromTop(rowH);
@@ -3629,6 +3708,28 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
             chebyHPow[(size_t) i].valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
         }
 
+        // Draw-grid overlays: one horizontal sweep sets all 12 harmonic weights / exponents at once
+        // (x -> column H2..H13, y -> value), instead of dragging each slider individually.
+        harmDrawStrip.numCols = 12;
+        harmDrawStrip.onDraw = [this](int col, float yNorm)
+        {
+            auto& s = chebyH[(size_t) col];
+            s.setValue(s.proportionOfLengthToValue((double) yNorm), juce::sendNotificationSync);
+        };
+        harmDrawStrip.setTooltip("Draw across H2-H13: click and drag horizontally to set every harmonic weight in one gesture. "
+                                 "The value boxes below stay editable for fine tuning.");
+        addAndMakeVisible(harmDrawStrip);
+
+        powDrawStrip.numCols = 12;
+        powDrawStrip.onDraw = [this](int col, float yNorm)
+        {
+            auto& s = chebyHPow[(size_t) col];
+            s.setValue(s.proportionOfLengthToValue((double) yNorm), juce::sendNotificationSync);
+        };
+        powDrawStrip.setTooltip("Draw across H2-H13 pow: click and drag horizontally to set every per-harmonic exponent in one gesture. "
+                                "The value boxes below stay editable for fine tuning.");
+        addAndMakeVisible(powDrawStrip);
+
         constexpr int kShValH = 20;
         constexpr int kShPctW = 72;
         constexpr int kShGainW = 72;
@@ -3748,6 +3849,8 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
         for (auto& l : chebyHL)   l.setVisible(chebyOn && detailOn);
         for (auto& s : chebyHPow) s.setVisible(chebyOn && detailOn);
         for (auto& l : chebyHPowL) l.setVisible(chebyOn && detailOn);
+        harmDrawStrip.setVisible(chebyOn && detailOn);
+        powDrawStrip.setVisible(chebyOn && detailOn);
 
         juce::ignoreUnused(kParamRows);
 
@@ -3788,13 +3891,23 @@ struct ParaEQ301AudioProcessorEditor::ShaperTabContent : public juce::Component
                            {&chebyYLL,&chebyYL}, {&chebyYCL,&chebyYC}, {&chebyYRL,&chebyYR} }, colWMain);
             b.removeFromTop(4);
             // 12 H weights on one row, 12 H pow on one row — always shown in Chebyshev mode.
+            // Each placeVertCol consumes colWDetail + 4px gap; the draw strip spans that pitch * 12.
+            const int colPitch = colWDetail + 4;
+            const int stripW = 12 * colPitch;
+            const int trackTop = 14;                  // label height above the slider
+            const int stripH = kColH - trackTop - 18; // minus the TextBoxBelow value box
+
             auto hRow = b.removeFromTop(kColH);
+            const auto hRowFull = hRow;
             for (int i = 0; i < 12; ++i)
                 placeVertCol(hRow, chebyHL[(size_t) i], chebyH[(size_t) i], colWDetail);
+            harmDrawStrip.setBounds(hRowFull.getX(), hRowFull.getY() + trackTop, stripW, stripH);
             b.removeFromTop(2);
             auto pRow = b.removeFromTop(kColH);
+            const auto pRowFull = pRow;
             for (int i = 0; i < 12; ++i)
                 placeVertCol(pRow, chebyHPowL[(size_t) i], chebyHPow[(size_t) i], colWDetail);
+            powDrawStrip.setBounds(pRowFull.getX(), pRowFull.getY() + trackTop, stripW, stripH);
             b.removeFromTop(2);
             juce::ignoreUnused(detailOn);
         }
@@ -3970,8 +4083,13 @@ void ParaEQ301AudioProcessorEditor::resized()
 
     {
         const int sliderH = 20;
-        masterDryWetSlider.setBounds(mixCol.getX() + 2, 2, juce::jmax(72, mixCol.getWidth() - 4), sliderH);
-        masterDryWetCaption.setBounds(mixCol.getX() + 2, kTopStripH - 10, mixCol.getWidth() - 4, 9);
+        const int sliderW = juce::jmax(72, mixCol.getWidth() - 4);
+        masterDryWetSlider.setBounds(mixCol.getX() + 2, 2, sliderW, sliderH);
+        // Centre the caption under the slider TRACK only (style uses a 52px TextBoxRight value box),
+        // not under the whole track+value-box column.
+        constexpr int kMixValueBoxW = 52;
+        const int trackW = juce::jmax(24, sliderW - kMixValueBoxW);
+        masterDryWetCaption.setBounds(mixCol.getX() + 2, kTopStripH - 10, trackW, 9);
     }
 
     int availForCurveAndTabs = belowTabsTop.getHeight();
