@@ -1105,7 +1105,7 @@ struct ParaEQ301AudioProcessorEditor::LfoTabContent : public juce::Component, pr
             r.useBw = bw;
 
             sk(r.rate);
-            styleMotionCaption(r.rateL, "LFO Hz");
+            styleMotionCaption(r.rateL, "LFO");
             addAndMakeVisible(r.rate);
             addAndMakeVisible(r.rateL);
             atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, rateId, r.rate));
@@ -1528,29 +1528,29 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
             addAndMakeVisible(band->gainLabel);
         }
 
-        styleLabel(hi.cfLabel, "Shelf Hz");
+        styleLabel(hi.cfLabel, "Shelf");
         hi.bandLabel.setTooltip("High shelf: boosts or cuts treble. It is not a high-pass filter - low frequencies still pass. \"Shelf Hz\" is the turnover: far above it the curve reaches the Gain value.");
         hi.cf.setTooltip("High shelf turnover frequency (Hz). Energy well above this frequency is tilted toward the Gain dB setting; below it the response flattens back toward 0 dB change (classic shelving EQ).");
         styleLabel(hi.gainLabel, "Gain dB");
         hi.gain.setTooltip("How much boost or cut applies in the treble region (0 dB = no change). Negative = gentle high cut.");
 
-        styleLabel(mid1.cfLabel, "Peak Hz");
-        styleLabel(mid1.bwLabel, "Width Hz");
+        styleLabel(mid1.cfLabel, "Peak");
+        styleLabel(mid1.bwLabel, "Width");
         styleLabel(mid1.gainLabel, "Gain dB");
         mid1.bandLabel.setTooltip("Peaking (parametric) band: bell-shaped boost or cut centred at Peak Hz.");
         mid1.cf.setTooltip("Centre frequency of the first mid peaking EQ.");
         mid1.bw.setTooltip("Bandwidth of the peak in Hz (smaller = narrower notch/boost).");
         mid1.gain.setTooltip("Gain at the peak centre in dB.");
 
-        styleLabel(mid2.cfLabel, "Peak Hz");
-        styleLabel(mid2.bwLabel, "Width Hz");
+        styleLabel(mid2.cfLabel, "Peak");
+        styleLabel(mid2.bwLabel, "Width");
         styleLabel(mid2.gainLabel, "Gain dB");
         mid2.bandLabel.setTooltip("Second peaking band: same idea as Mid1, different frequency and width.");
         mid2.cf.setTooltip("Centre frequency of the second mid peaking EQ.");
         mid2.bw.setTooltip("Bandwidth of the peak in Hz.");
         mid2.gain.setTooltip("Gain at the peak centre in dB.");
 
-        styleLabel(low.cfLabel, "Shelf Hz");
+        styleLabel(low.cfLabel, "Shelf");
         styleLabel(low.gainLabel, "Gain dB");
         low.bandLabel.setTooltip("Low shelf: boosts or cuts bass. It is not a low-pass filter - highs still pass. \"Shelf Hz\" is the turnover: far below it the curve reaches the Gain value.");
         low.cf.setTooltip("Low shelf turnover frequency (Hz). Energy well below this frequency is tilted toward the Gain dB setting; above it the response flattens back toward 0 dB change (classic shelving EQ).");
@@ -1824,7 +1824,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
 
         styleLinearSliderCompact(coreLifeHz, kAccentBlue);
         coreLifeHz.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 20);
-        styleLabel(coreLifeHzLabel, "Life Hz");
+        styleLabel(coreLifeHzLabel, "Life");
         addAndMakeVisible(coreLifeHz);
         addAndMakeVisible(coreLifeHzLabel);
         coreLifeHz.setTooltip("Rate of the core Life LFO (independent of Motion band LFOs). Inactive in Linear EQ only mode.");
@@ -2502,7 +2502,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         wirePct(svfMix, svfMixL, "svfMix", "SVF mix %",
                 "Dry + wet bandpass injection; use modest mix at high Q.");
         styleLinearSliderCompact(svfCf, kAccentBlue);
-        styleLabelDark(svfCfL, "SVF Hz", true);
+        styleLabelDark(svfCfL, "SVF", true);
         addAndMakeVisible(svfCf);
         addAndMakeVisible(svfCfL);
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "svfCf", svfCf));
@@ -2746,7 +2746,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         };
 
         styleLinearSliderCompact(anharmFund, kAccentBlue);
-        styleLabelDark(anharmFundL, "Fundamental Hz", true);
+        styleLabelDark(anharmFundL, "Fundamental", true);
         addAndMakeVisible(anharmFund);
         addAndMakeVisible(anharmFundL);
         atts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "anharmFundHz", anharmFund));
@@ -2951,7 +2951,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         wirePct(aprMix, aprMixL, "aprMix", "Mix %", "How loud the resonator is.");
 
         styleLinearSliderCompact(aprBaseHz, kAccentBlue);
-        styleLabelDark(aprBaseHzL, "Base Hz", true);
+        styleLabelDark(aprBaseHzL, "Base", true);
         addAndMakeVisible(aprBaseHz);
         addAndMakeVisible(aprBaseHzL);
         aprBaseHz.setTooltip("Resonator centre frequency before auto-tracking and pump modulation.");
@@ -2969,7 +2969,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         aprQ.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
 
         styleLinearSliderCompact(aprPumpHz, kAccentBlue);
-        styleLabelDark(aprPumpHzL, "Pump Hz", true);
+        styleLabelDark(aprPumpHzL, "Pump", true);
         addAndMakeVisible(aprPumpHz);
         addAndMakeVisible(aprPumpHzL);
         aprPumpHz.setTooltip("Rate of sinusoidal modulation of effective centre frequency (parametric-style pumping).");
@@ -3250,7 +3250,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
         wirePct(parexMix, parexMixL, "parexMix", "Mix %", "Wet level into the parallel mix.");
 
         styleLinearSliderCompact(parexBaseHz, kAccentBlue);
-        styleLabelDark(parexBaseHzL, "f0 (Hz)", true);
+        styleLabelDark(parexBaseHzL, "f0", true);
         addAndMakeVisible(parexBaseHz);
         addAndMakeVisible(parexBaseHzL);
         parexBaseHz.setTooltip("Resonator natural frequency. With ratio 2/1 and a kick at 55 Hz, set f0 = 55 Hz for octave-down body.");
@@ -3299,7 +3299,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "testToneOn", testToneToggle));
 
         styleLinearSliderCompact(testToneHz, kAccentBlue);
-        styleLabelDark(testToneHzL, "Sine Hz", true);
+        styleLabelDark(testToneHzL, "Sine", true);
         addAndMakeVisible(testToneHz);
         addAndMakeVisible(testToneHzL);
         testToneHz.setTooltip("Frequency of the internal test sine. Set to the resonator f0 to watch it grow / clip; set to f0/2 to see 2:1 sub-octave generation.");
