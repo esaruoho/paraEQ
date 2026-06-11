@@ -60,6 +60,11 @@ namespace
     constexpr int kKnobSize = 40;
     // Rotary + TextBoxBelow must live inside setBounds height; captions go below getBottom().
     constexpr int kTextBoxH = 18;
+
+    // GLOBAL control heights — every horizontal slider row + number box across ALL tabs uses these,
+    // so Roast / ParEx / APR / Anharm / Shaper look identical. Change here to resize everywhere.
+    constexpr int kUiValueBoxH = 20;  // number box (TextBoxRight) height
+    constexpr int kUiSliderRowH = 24; // one inline (label-left) horizontal-slider row
     constexpr int kSliderColumnH = kKnobSize + kTextBoxH;
     constexpr int kCaptionH = 12;
     constexpr int kGapCaption = 4;
@@ -157,7 +162,7 @@ namespace
     {
         s.setSliderStyle(juce::Slider::LinearHorizontal);
         // Default wide enough for "100 %" + Hz/dB readouts on tabs that forget a follow-up setTextBoxStyle.
-        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 20);
+        s.setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, kUiValueBoxH);
         s.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a1a1a));
         s.setColour(juce::Slider::trackColourId, fillCol.withAlpha(0.85f));
         s.setColour(juce::Slider::thumbColourId, kAccentBlue);
@@ -2399,9 +2404,15 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
 
     static void placeRow(juce::Rectangle<int>& col, juce::Label& cap, juce::Slider& sl, int rowH)
     {
+        // Inline label-LEFT + slider fills the full row height (same shape as placeWideSliderRow on
+        // ParEx / APR / Anharm), so the number box renders at the shared kUiValueBoxH, not a crushed
+        // rowH-18 sliver. cap is right-justified toward the slider for a tidy column edge.
         auto row = col.removeFromTop(rowH);
-        cap.setBounds(row.getX(), row.getY(), row.getWidth(), 14);
-        sl.setBounds(row.getX(), row.getY() + 16, row.getWidth(), row.getHeight() - 18);
+        const int labelW = juce::jlimit(86, 150, row.getWidth() * 2 / 5);
+        cap.setBounds(row.getX(), row.getY() + (rowH - 14) / 2, labelW, 14);
+        cap.setJustificationType(juce::Justification::centredRight);
+        const int slX = row.getX() + labelW + 6;
+        sl.setBounds(slX, row.getY(), juce::jmax(120, row.getRight() - slX), rowH);
     }
 
     RoastTabContent(ParaEQ301AudioProcessor& processor,
@@ -2547,7 +2558,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
                 "Gain of the bandpass branch before it is mixed in (+/-18 dB).");
 
         constexpr int kRoastValW = 66;
-        constexpr int kRoastValH = 20;
+        constexpr int kRoastValH = kUiValueBoxH;
         constexpr int kRoastHzW = 76;
         auto styleRoastValueBox = [&](juce::Slider& s, int boxW)
         {
@@ -2581,7 +2592,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     {
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 24;
+        constexpr int kRoastRowH = kUiSliderRowH;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         return kChrome + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
@@ -2604,7 +2615,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         b.removeFromTop(6);
 
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 24;
+        constexpr int kRoastRowH = kUiSliderRowH;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         const int gridH = kRoastSliderRows * kRoastRowH + kGridPad;
@@ -2735,7 +2746,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         batts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(ap, "anharmBankEnable", anharmOnToggle));
 
         constexpr int kAnharmValueBoxW = 92;
-        constexpr int kAnharmValueBoxH = 20;
+        constexpr int kAnharmValueBoxH = kUiValueBoxH;
         auto styleAnharmValueBox = [&](juce::Slider& s)
         {
             s.setTextBoxStyle(juce::Slider::TextBoxRight, false, kAnharmValueBoxW, kAnharmValueBoxH);
@@ -2821,7 +2832,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kAnharmRowH = 24;
+        constexpr int kAnharmRowH = kUiSliderRowH;
         constexpr int kParamRows = 8;
         constexpr int kRows = kParamRows * kAnharmRowH;
         return kOuterPad + kAfterIntro + kRows + 8;
@@ -2840,7 +2851,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         anharmOnToggle.setBounds(toggles.removeFromLeft(200));
         b.removeFromTop(6);
         constexpr int kParamRows = 8;
-        constexpr int kAnharmRowH = 24;
+        constexpr int kAnharmRowH = kUiSliderRowH;
         const int paramNeed = kParamRows * kAnharmRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
@@ -3024,7 +3035,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kRowH = 24;
+        constexpr int kRowH = kUiSliderRowH;
         constexpr int kParamRows = 7;
         return kOuterPad + kAfterIntro + kParamRows * kRowH + 10;
     }
@@ -3040,7 +3051,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         aprEnableToggle.setBounds(toggles.removeFromLeft(280));
         b.removeFromTop(6);
         constexpr int kParamRows = 7;
-        constexpr int kRowH = 24;
+        constexpr int kRowH = kUiSliderRowH;
         const int paramNeed = kParamRows * kRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
@@ -3359,7 +3370,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kRowH = 24; // tighter rows so the whole tab fits without a scrollbar
+        constexpr int kRowH = kUiSliderRowH; // tighter rows so the whole tab fits without a scrollbar
         constexpr int kParamRows = 10; // mix, f0, Q, ratio, depth, drive, pumpSrc, sineOn, sineHz, sineDb
         constexpr int kScopeH = 150;
         return kOuterPad + kAfterIntro + kParamRows * kRowH + kScopeH + 14;
@@ -3383,7 +3394,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
             scope->setBounds(scopeArea);
 
         constexpr int kParamRows = 10;
-        constexpr int kRowH = 24; // tighter rows (was 32) so the tab fits without a scrollbar
+        constexpr int kRowH = kUiSliderRowH; // tighter rows (was 32) so the tab fits without a scrollbar
         const int paramNeed = kParamRows * kRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
