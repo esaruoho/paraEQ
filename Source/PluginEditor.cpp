@@ -3359,7 +3359,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kRowH = 32;
+        constexpr int kRowH = 24; // tighter rows so the whole tab fits without a scrollbar
         constexpr int kParamRows = 10; // mix, f0, Q, ratio, depth, drive, pumpSrc, sineOn, sineHz, sineDb
         constexpr int kScopeH = 150;
         return kOuterPad + kAfterIntro + kParamRows * kRowH + kScopeH + 14;
@@ -3383,7 +3383,7 @@ struct ParaEQ301AudioProcessorEditor::ParexTabContent : public juce::Component
             scope->setBounds(scopeArea);
 
         constexpr int kParamRows = 10;
-        constexpr int kRowH = 32;
+        constexpr int kRowH = 24; // tighter rows (was 32) so the tab fits without a scrollbar
         const int paramNeed = kParamRows * kRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
