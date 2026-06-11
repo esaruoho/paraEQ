@@ -1325,6 +1325,15 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
                                                     private juce::Timer,
                                                     private juce::Slider::Listener
 {
+    /** ComboBox that flags when a value change came from a genuine user popup (vs. a programmatic
+        param->box push from the attachment, which also fires onChange). Lets us auto-enable BPM
+        sync only on real user selection — not on preset load / host automation. */
+    struct SyncDivComboBox : public juce::ComboBox
+    {
+        bool userArmed = false;
+        void showPopup() override { userArmed = true; juce::ComboBox::showPopup(); }
+    };
+
     struct BandKnobs
     {
         juce::Label bandLabel;
@@ -1368,7 +1377,7 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
     juce::Label motionStatus;
     juce::TextButton motionInfoBtn;
     juce::ToggleButton lfoHostSyncToggle { "BPM sync" };
-    juce::ComboBox lfoHostSyncDivBox;
+    SyncDivComboBox lfoHostSyncDivBox;
     juce::ToggleButton lfoSyncJitterToggle { "Jitter" };
     juce::Slider lfoSyncJitterDepth;
     juce::Slider lfoSyncJitterRate;
@@ -1607,7 +1616,21 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         stylePeqComboBox(lfoHostSyncDivBox);
         addAndMakeVisible(lfoHostSyncDivBox);
         comboAtts.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(ap, "lfoHostSyncDiv", lfoHostSyncDivBox));
-        lfoHostSyncDivBox.setEnabled(ap.getRawParameterValue("lfoHostSync")->load() > 0.5f);
+        // Always enabled: picking a division from the menu auto-checks "BPM sync" (better UX than a
+        // greyed-out menu). userArmed guards against programmatic param->box pushes (preset/automation).
+        lfoHostSyncDivBox.onChange = [this]
+        {
+            if (! lfoHostSyncDivBox.userArmed)
+                return;
+            lfoHostSyncDivBox.userArmed = false;
+            if (auto* p = proc.getAPVTS().getParameter("lfoHostSync"))
+                if (p->getValue() < 0.5f)
+                {
+                    p->beginChangeGesture();
+                    p->setValueNotifyingHost(1.0f);
+                    p->endChangeGesture();
+                }
+        };
 
         // BPM-sync rate jitter: enable + depth + speed. A slow LFO morphs the synced rate between
         // half-time and double-time of the chosen division. Self-labelling (toggle text + value boxes).
@@ -1891,10 +1914,9 @@ struct ParaEQ301AudioProcessorEditor::EqTabContent : public juce::Component,
         motionStatus.setText(buildEqMotionStatusShort(ap, s), juce::dontSendNotification);
         motionStatus.setTooltip(buildEqMotionPanelTooltip(ap, s));
 
-        const bool bpmSyncOn = ap.getRawParameterValue("lfoHostSync")->load() > 0.5f;
-        lfoHostSyncDivBox.setEnabled(bpmSyncOn);
-        // Jitter toggle + depth + rate are always interactive (no greying); the toggle gates the
-        // EFFECT, not slider usability. Jitter modulates the Motion rate whether synced or free-running.
+        // BPM-sync division menu stays always enabled — selecting a division auto-checks "BPM sync".
+        // Jitter toggle + depth + rate are also always interactive; the toggle gates the EFFECT, not
+        // usability. Jitter modulates the Motion rate whether synced or free-running.
 
         const bool followLive = motionLfoDepthActive(ap) && s.motionEngaged && eqSliderGestureDepth == 0
                                 && !eqTextBoxHasKeyboardFocus();
