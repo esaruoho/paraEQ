@@ -904,7 +904,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParaEQ301AudioProcessor::cre
         "masterDryWet", "Dry/Wet",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
         1.0f,
-        juce::AudioParameterFloatAttributes().withLabel("%")));
+        // DRY/WET IS ALWAYS A PERCENTAGE (0-100%), everywhere: custom UI, host automation, AU generic
+        // view. Format on the PARAMETER so it is the single source of truth (SliderAttachment delegates
+        // the slider's text box to this, overriding any slider-level textFromValueFunction).
+        juce::AudioParameterFloatAttributes()
+            .withLabel("%")
+            .withStringFromValueFunction([](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; })
+            .withValueFromStringFunction([](const juce::String& t) { return juce::jlimit(0.0f, 1.0f, t.getFloatValue() / 100.0f); })));
 
     return layout;
 }

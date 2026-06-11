@@ -4014,14 +4014,8 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
     masterDryWetCaption.setFont(juce::Font(juce::FontOptions(9.0f)));
     masterDryWetCaption.setColour(juce::Label::textColourId, kTextBright.withAlpha(0.9f));
     masterDryWetSlider.setTooltip("Parallel mix of dry input vs the full processed chain (EQ, ThrillMe, Roast, output limiter, etc.). 0% = dry only, 100% = wet only. Default 100%.");
-    masterDryWetSlider.textFromValueFunction = [](double v)
-    {
-        return juce::String(juce::roundToInt(v * 100.0)) + " %";
-    };
-    masterDryWetSlider.valueFromTextFunction = [](const juce::String& t)
-    {
-        return juce::jlimit(0.0, 1.0, t.getDoubleValue() / 100.0);
-    };
+    // Percentage text comes from the masterDryWet PARAMETER (withStringFromValueFunction); the
+    // SliderAttachment delegates the value box to it, so no slider-level textFromValueFunction here.
     addAndMakeVisible(masterDryWetSlider);
     addAndMakeVisible(masterDryWetCaption);
     attachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(ap, "masterDryWet", masterDryWetSlider));
