@@ -2581,7 +2581,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
     {
         constexpr int kChrome = 28 + 6 + 22 + 6 + 6;
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 32;
+        constexpr int kRoastRowH = 24;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         return kChrome + 6 + kRoastSliderRows * kRoastRowH + kGridPad + kSvfStripH + 8;
@@ -2604,7 +2604,7 @@ struct ParaEQ301AudioProcessorEditor::RoastTabContent : public juce::Component
         b.removeFromTop(6);
 
         constexpr int kRoastSliderRows = 9;
-        constexpr int kRoastRowH = 32;
+        constexpr int kRoastRowH = 24;
         constexpr int kGridPad = 6;
         constexpr int kSvfStripH = 108;
         const int gridH = kRoastSliderRows * kRoastRowH + kGridPad;
@@ -2821,7 +2821,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kAnharmRowH = 32;
+        constexpr int kAnharmRowH = 24;
         constexpr int kParamRows = 8;
         constexpr int kRows = kParamRows * kAnharmRowH;
         return kOuterPad + kAfterIntro + kRows + 8;
@@ -2840,7 +2840,7 @@ struct ParaEQ301AudioProcessorEditor::AnharmTabContent : public juce::Component
         anharmOnToggle.setBounds(toggles.removeFromLeft(200));
         b.removeFromTop(6);
         constexpr int kParamRows = 8;
-        constexpr int kAnharmRowH = 32;
+        constexpr int kAnharmRowH = 24;
         const int paramNeed = kParamRows * kAnharmRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
@@ -3024,7 +3024,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
     {
         constexpr int kOuterPad = 16;
         constexpr int kAfterIntro = 26 + 6;
-        constexpr int kRowH = 32;
+        constexpr int kRowH = 24;
         constexpr int kParamRows = 7;
         return kOuterPad + kAfterIntro + kParamRows * kRowH + 10;
     }
@@ -3040,7 +3040,7 @@ struct ParaEQ301AudioProcessorEditor::ParametricTabContent : public juce::Compon
         aprEnableToggle.setBounds(toggles.removeFromLeft(280));
         b.removeFromTop(6);
         constexpr int kParamRows = 7;
-        constexpr int kRowH = 32;
+        constexpr int kRowH = 24;
         const int paramNeed = kParamRows * kRowH;
         int bodyH = juce::jmax(1, b.getHeight());
         if (bodyH > paramNeed)
@@ -4047,7 +4047,11 @@ ParaEQ301AudioProcessorEditor::ParaEQ301AudioProcessorEditor(ParaEQ301AudioProce
 
     setLookAndFeel(&pluginSliderValueLf);
 
-    setSize(900, 790);
+    // 830 (was 790): the EQ tab's 4 rotary band rows need ~510px of tab viewport; rotary knobs should
+    // not shrink, so the window is a touch taller instead. Gives every tab a scrollbar-free viewport
+    // (~530px). The top meters + spectrum strip are unchanged (curve height stays capped); the extra
+    // height all goes to the tab content area.
+    setSize(900, 830);
 }
 
 ParaEQ301AudioProcessorEditor::~ParaEQ301AudioProcessorEditor()
